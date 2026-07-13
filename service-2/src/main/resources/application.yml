@@ -1,0 +1,19 @@
+server:
+  port: 8082
+spring:
+  application:
+    name: service-2
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${OKTA_ISSUER:https://ntrsoiesys.oktapreview.com/oauth2/aus11aowjcqDJAtVk1d8}
+          audiences: ${OKTA_AUDIENCE:api://default}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+logging:
+  level:
+    com.example.okta: ${APP_LOG_LEVEL:DEBUG}

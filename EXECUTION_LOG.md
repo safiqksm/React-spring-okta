@@ -1,0 +1,64 @@
+# Execution Log: Steps, Problems, and Fixes
+
+Use this file to record implementation activity, blockers, and resolutions.
+Add an entry for every meaningful change or issue.
+
+## Status Legend
+
+- `Planned`: not started.
+- `In Progress`: currently being implemented.
+- `Blocked`: needs a decision, credential, or external change.
+- `Complete`: implemented and validated.
+
+## Work Items
+
+| ID | Phase | Step | Status | Validation | Notes |
+| --- | --- | --- | --- | --- | --- |
+| P1-01 | 1 | Create local React, Gateway, Service 1, and Service 2 projects | Complete | Wrapper build and health checks pass | No containers |
+| P1-02 | 1 | Configure Okta SPA login and protected routes | In Progress | Browser login succeeds | SPA client ID configured locally; needs manual Okta sign-in |
+| P1-02A | 1 | Build Azure-style profile and Settings pages | Complete | Production SPA build passes | Display only approved ID-token claims |
+| P1-02B | 1 | Implement simulated factor add/remove service calls | Complete | Unit tests and SPA build pass | No Okta factor state changes |
+| P1-03 | 1 | Configure Gateway JWT validation and routes | Planned | Token security tests pass | |
+| P1-04 | 1 | Secure services and Service 1 -> Service 2 call | Planned | Integration tests pass | |
+| P1-05 | 1 | Run end-to-end authentication and API tests | Planned | E2E test passes | |
+| P2-01 | 2 | Add DPoP issuance and validation | Planned | DPoP tests pass | |
+| P3-01 | 3 | Add Okta on-behalf-of token exchange | Planned | Delegation tests pass | |
+| P4-01 | 4 | Add pushed authorization requests | Planned | PAR tests pass | |
+| P5-01 | 5 | Evaluate containerization and deployment | Planned | Deployment plan approved | Deferred until local phases pass |
+| P5-02 | 5 | Implement real Okta factor management | Planned | Okta enroll/remove tests pass | Never expose Okta API tokens to SPA |
+
+## Problems and Fixes
+
+| ID | Date | Problem | Impact | Investigation | Fix | Status | Verification |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| ISSUE-001 | 2026-07-13 | Workspace is empty; no application code exists. | Implementation has not started. | Confirmed directory contains no project files. | Create structure after Okta and deployment decisions are provided. | Open | Project skeleton builds. |
+| ISSUE-002 | 2026-07-13 | A confidential-client secret was shared outside secure configuration. | Secret must not be used in the React SPA or committed to source control. | SPA uses Authorization Code with PKCE and is a public client. | Do not store the secret; rotate it in Okta. Use a secret manager or private-key JWT for a future confidential backend client. | Open | Rotated secret and no secret found in repository. |
+
+## Decision Log
+
+| ID | Date | Decision Needed | Owner | Status | Resolution |
+| --- | --- | --- | --- | --- | --- |
+| DEC-001 | 2026-07-13 | Provide Okta SPA client configuration and API audience/scopes. | Project owner | Open | |
+| DEC-002 | 2026-07-13 | Choose Service 1 -> Service 2 authentication for Phase 1. | Project owner | Open | |
+| DEC-003 | 2026-07-13 | Choose local SPA, Gateway, and service ports/origins. | Project owner | Open | |
+| DEC-004 | 2026-07-13 | Choose deployment and service-discovery model. | Project owner | Deferred | Phase 5 only |
+| DEC-005 | 2026-07-13 | Confirm Okta OIE authenticator policies and real factor-management API flow. | Project owner | Deferred | Implement after initial phases |
+
+## Change Entries
+
+### 2026-07-13 - Planning documentation created
+
+- Created `PLAN.md` with the four-phase implementation plan.
+- Created this log to track execution steps, problems, fixes, and decisions.
+- No application code or infrastructure has been created yet.
+
+### 2026-07-13 - Phase 1 local scaffold started
+
+- Created the React SPA, Spring Cloud Gateway, Service 1, and Service 2.
+- Configured the SPA with the supplied public client ID in ignored local config.
+- Added simulated factor add/remove API calls through the Gateway.
+- Verified the React production build and all Spring module compilation.
+- Verified local health endpoints for Gateway (`8080`), Service 1 (`8081`), and
+  Service 2 (`8082`).
+- Added unit tests for Service 2 and simulated factor responses; `./gradlew test`
+  and `npm run build` pass.
