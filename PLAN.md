@@ -153,14 +153,137 @@ Phase 2 must not begin until all Phase 1 tests pass in the local environment.
 - Add replay detection with bounded storage and clear expiry behavior.
 - Test missing, expired, mismatched, and replayed DPoP proofs.
 
-## Phase 3: Okta On-Behalf-Of
+## Phase 3: Okta On-Behalf-Of (Service 1 → Service 3)
 
-- Configure Okta-supported token exchange/on-behalf-of settings and scopes.
-- Have Service 1 exchange the incoming delegated user context for a
-  Service-2-specific, least-privilege token.
-- Validate exchanged tokens and audience at Service 2.
-- Test scope narrowing, authorization failures, exchange failures, and audit
-  logging without exposing tokens.
+Reference: [Set up token exchange](https://developer.okta.com/docs/guides/set-up-token-exchange/main/).
+Service 1 → Service 2 keeps its existing Phase 2 client-credentials/`private_key_jwt`
+hop unchanged — that pattern intentionally has no user context and stays as the
+"pure service identity" example. Service 3 is the new target that demonstrates the
+opposite trust model: Service 1 exchanges the caller's own delegated access token
+for a new, narrowly scoped token that still carries the original user's `sub`,
+using RFC 8693 token exchange (`grant_type=urn:ietf:params:oauth:grant-type:token-exchange`).
+
+### Okta grant mechanics (from the reference guide above)
+
+The token exchange request Service 1 sends to Okta's `/v1/token` endpoint:
+
+```
+grant_type=urn:ietf:params:oauth:grant-type:token-exchange
+subject_token_type=urn:ietf:params:oauth:token-type:access_token
+subject_token={the caller's own access token, as validated by Service 1}
+scope=service3.read
+audience=https://ntrsoiesys.oktapreview.com
+```
+
+Client authentication is Service 1's own confidential-client credential, sent
+however that client is configured (see Decision 8 below). Okta's response is a
+new access token whose `sub` claim still matches the original user, but whose
+`scope` is narrowed to what was requested and granted by the access policy —
+Service 1 never has to see or manufacture the downstream identity itself, Okta
+enforces the narrowing.
+
+The reference guide's own walkthrough authenticates the service app with
+`client_secret_basic` (base64 client ID/secret in the `Authorization` header)
+and does not mention `private_key_jwt` for this specific grant, `actor_token`,
+or `requested_token_type` — none of those appear in Okta's documented example,
+so this plan doesn't assume them. Confirm during Okta console setup (Decision 8)
+whether the org's token endpoint accepts `private_key_jwt` for a token-exchange
+grant the same way it already does for Service 1 → Service 2's client-credentials
+grant; if not, fall back to `client_secret_basic` with the secret held server-side
+only (never in the SPA, matching the existing security posture in this file).
+
+### Okta admin console configuration (per the reference guide's procedure)
+
+1. Under **Security > API**, select the existing custom authorization server
+   (`aus11aowjcqDJAtVk1d8`) and open its **Scopes** tab. Add a new scope
+   `service3.read`, matching the naming already used for `service2.read`.
+2. Decide and create the OAuth client that will perform the exchange
+   (Decision 8): either edit the existing Service 1 → Service 2 "API Services"
+   app to add the **Token Exchange** grant type (**General Settings > Grant
+   type > Advanced**), or create a second, dedicated API Services app scoped
+   only to this exchange. This plan recommends a dedicated app so the
+   client-credentials trust boundary (Service 1 → Service 2) stays separate
+   from the token-exchange trust boundary (Service 1 → Service 3) — one
+   compromised credential doesn't grant both capabilities.
+3. Under the authorization server's **Access Policies** tab, add a new policy
+   assigned to that client app (e.g. name it "Access Service 3"), then add a
+   rule under it (e.g. "Service 1 to Service 3") permitting grant type
+   **Token Exchange** with **the following scopes**: `service3.read`.
+4. If the client uses `private_key_jwt`, register its public JWK the same way
+   the existing Service 1 → Service 2 client does; if it uses a client secret,
+   generate one and store it the same way the existing PKCS#8 private key is
+   stored — outside the repository, referenced only by an environment
+   variable at runtime.
+
+### Service 3 (new Gradle module)
+
+- Add `service-3` next to `service-1`/`service-2` in `settings.gradle`.
+- `service-3/build.gradle`: `spring-boot-starter-web`,
+  `spring-boot-starter-oauth2-resource-server`, `spring-boot-starter-actuator`
+  — same shape as `service-2/build.gradle`. No nimbus/BouncyCastle dependency
+  needed; Service 3 only validates inbound JWTs, it doesn't sign anything.
+- `service-3/src/main/resources/application.yml`: `server.port: 8083`
+  (next free port after 8080/8081/8082), same
+  `OKTA_ISSUER`/`OKTA_AUDIENCE`/`APP_LOG_LEVEL` env-var pattern as the other
+  two services.
+- `SecurityConfig`: protect `/api/service-3/**` with
+  `.hasAuthority("SCOPE_service3.read")`, mirroring Service 2's
+  `SecurityConfig` for `/api/service-2/**`.
+- A controller (e.g. `ServiceThreeController`) exposing `GET
+  /api/service-3/ping`, returning the same
+  `{"message": ..., "jwt": {...}}` shape as `ServiceTwoController`/`JwtDebugMetadata`
+  (subject, issuer, expiresAt, scopes, tokenFingerprint) — the returned
+  `subject` here is the demonstration payoff: it should show the *original
+  user's* subject, not a service-account client ID, proving the OBO exchange
+  preserved delegated identity while `scopes` shows only `service3.read`.
+- Service 3 is **not** given a Gateway route. It's reached only from inside
+  Service 1's process, the same way Service 2 is reached for the
+  Service 1 → Service 2 hop — no public path to it exists.
+
+### Service 1 changes
+
+- New `ServiceThreeTokenProvider` alongside the existing
+  `ServiceTwoTokenProvider`, implementing the token-exchange POST described
+  above instead of a client-credentials POST. It takes the inbound caller's
+  own `Jwt` (already available via `@AuthenticationPrincipal Jwt jwt` in
+  `ApiController`) and returns the exchanged access token string.
+- New `ApiController` endpoint, e.g. `GET /api/service-1/obo-hello`, that
+  calls `serviceThreeTokenProvider.exchange(jwt)`, then calls Service 3's
+  `/api/service-3/ping` with the exchanged token as `Authorization: Bearer`,
+  and returns a response combining the caller's own validated JWT metadata
+  and Service 3's response — mirroring the existing `/api/service-1/hello`
+  shape (`jwt` + `service3Jwt` fields) so the frontend pattern established for
+  `service2Jwt` extends naturally.
+- Reachable via the Gateway's existing `/api/service-1/**` route — no Gateway
+  routing changes needed.
+
+### Frontend (stretch, not required for the OBO demo to work end-to-end)
+
+- Add a third diagnostic button, "Call Service 1 to Service 3 (OBO)", calling
+  the new `/api/service-1/obo-hello` endpoint, and a UI card showing
+  `service3Jwt` the same way the existing `service2Jwt` card renders — the
+  interesting contrast to show side by side: `service2Jwt.subject` is a
+  service client ID (client-credentials), `service3Jwt.subject` is the
+  signed-in user's own subject (token exchange), even though both hops
+  originate from Service 1.
+
+### Phase 3 test gate
+
+- Unit test `ServiceThreeTokenProvider`'s request body construction (grant
+  type, subject_token, subject_token_type, scope, audience) without hitting
+  a real Okta endpoint.
+- Integration test Service 1 → Service 3 success and failure paths: missing
+  Token Exchange grant on the client, insufficient scope in the access
+  policy, expired/invalid subject token, Service 3 rejecting a token whose
+  scope isn't `service3.read`.
+- Verify the exchanged token's `sub` claim still equals the original caller's
+  `sub`, and its `scope` claim is narrowed to `service3.read` only (not the
+  full set of user scopes like `openid profile email`).
+- Verify no token value (subject token or exchanged token) appears in logs;
+  reuse the same subject/issuer/expiry/scope/fingerprint-only logging pattern
+  already used everywhere else in this repo.
+
+Phase 3 must not begin implementation until Decisions 7–10 below are resolved.
 
 ## Phase 4: Pushed Authorization Requests (PAR)
 
@@ -190,3 +313,16 @@ Begin this phase only after Phases 1 through 4 are complete and tested locally.
 5. API endpoint contract and authorization policy for each service.
 6. Okta authenticator enrollment policies and the approved server-side approach
    for real user factor management, deferred to a later phase.
+7. Whether Service 1's token-exchange client is a new, dedicated Okta Service
+   App (recommended, keeps the client-credentials and token-exchange trust
+   boundaries separate) or the existing Service 1 → Service 2 app with the
+   Token Exchange grant type added.
+8. Client authentication method for that token-exchange client:
+   `private_key_jwt` (consistent with Service 1 → Service 2, but unconfirmed
+   as supported for this specific grant — verify in the Okta admin console)
+   or `client_secret_basic` (what Okta's own reference guide demonstrates).
+9. Confirm the new custom scope name `service3.read` and that the existing
+   shared `audience` (`https://ntrsoiesys.oktapreview.com`) is reused rather
+   than introducing a second audience.
+10. Confirm Service 3 stays internal-only (no Gateway route) versus adding a
+    public route for it later.
