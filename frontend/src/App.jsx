@@ -39,6 +39,7 @@ function Home() {
   const { oktaAuth, authState } = useOktaAuth();
   const [message, setMessage] = React.useState('');
   const [validatedJwt, setValidatedJwt] = React.useState(null);
+  const [service2Jwt, setService2Jwt] = React.useState(null);
   const [dpopProof, setDpopProof] = React.useState(null);
   const [serviceResult, setServiceResult] = React.useState('');
   const claims = authState?.idToken?.claims;
@@ -48,10 +49,12 @@ function Home() {
       const result = await getServiceChain(oktaAuth);
       setMessage(result.message);
       setValidatedJwt(result.jwt);
+      setService2Jwt(result.service2Jwt);
       setDpopProof(result.dpopProof);
     } catch (error) {
       setMessage(error.message);
       setValidatedJwt(null);
+      setService2Jwt(null);
       setDpopProof(null);
     }
   }
@@ -62,11 +65,13 @@ function Home() {
       setMessage('Service 1 call succeeded.');
       setServiceResult(result.message);
       setValidatedJwt(result.jwt);
+      setService2Jwt(null);
       setDpopProof(result.dpopProof);
     } catch (error) {
       setMessage(error.message);
       setServiceResult('');
       setValidatedJwt(null);
+      setService2Jwt(null);
       setDpopProof(null);
     }
   }
@@ -87,6 +92,13 @@ function Home() {
         <dt>Expires</dt><dd>{validatedJwt.expiresAt}</dd>
         <dt>Scopes</dt><dd>{validatedJwt.scopes?.join(', ') || 'None'}</dd>
         <dt>Fingerprint</dt><dd className="token-fingerprint">{validatedJwt.tokenFingerprint}</dd>
+      </dl></section>}
+      {service2Jwt && <section className="card"><h2>Service 1 → Service 2 token</h2><p>Separate private-key JWT client-credentials token, not your user token.</p><dl>
+        <dt>Subject</dt><dd className="wrap">{service2Jwt.subject}</dd>
+        <dt>Issuer</dt><dd className="wrap">{service2Jwt.issuer}</dd>
+        <dt>Expires</dt><dd>{service2Jwt.expiresAt}</dd>
+        <dt>Scopes</dt><dd>{service2Jwt.scopes?.join(', ') || 'None'}</dd>
+        <dt>Fingerprint</dt><dd className="token-fingerprint">{service2Jwt.tokenFingerprint}</dd>
       </dl></section>}
       {dpopProof && <section className="card"><h2>DPoP proof</h2><dl>
         <dt>Method</dt><dd>{dpopProof.method}</dd>

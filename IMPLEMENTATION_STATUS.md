@@ -81,29 +81,61 @@ The `secrets/` directory is ignored by Git. The private key must not be committe
 - Gateway, Service 1, Service 2, and frontend health checks were observed as available after restarts.
 - Service 1 was rebuilt and restarted after adding diagnostics; `GET /actuator/health` returned `200`.
 
-## Current Failure
+## Resolved: Gateway → Service 1 "Invalid bearer token"
 
-Both UI diagnostic calls fail after successful login:
+Root cause (confirmed by decompiling `spring-security-oauth2-resource-server-6.5.9.jar`):
+Spring Security's `BearerTokenAuthenticationFilter` has a hardcoded `isDPoPBoundAccessToken(...)`
+check that throws `OAuth2AuthenticationException("Invalid bearer token")` whenever an
+authenticated JWT carries a `cnf.jkt` claim (i.e., is DPoP-bound) but was presented via the
+`Bearer` scheme. This is an intentional anti-downgrade safeguard (RFC 9449), not a
+config/audience bug — it fired because `InternalAuthorizationHeaderFilter` in the Gateway was
+rewriting `Authorization: DPoP ...` to `Authorization: Bearer ...` before proxying to Service 1
+and Service 2, and every access token has `cnf.jkt` set once `VITE_OKTA_USE_DPOP=true`.
 
-```text
-Gateway token validation failed: service-1: OAuth2AuthenticationException: Invalid bearer token
-```
+Fix: removed `InternalAuthorizationHeaderFilter` entirely so the Gateway forwards the `DPoP`
+scheme and proof header unchanged. Spring Security 6.5.x auto-registers
+`DPoPAuthenticationConfigurer` on any resource server with `DPoPProofJwtDecoderFactory` on the
+classpath (already true via `spring-boot-starter-oauth2-resource-server`), so Service 1 and
+Service 2 now validate the DPoP proof and JWT themselves with no new application code. Added
+`server.forward-headers-strategy: framework` to both services so `HttpServletRequest`
+reconstructs the request URL from Gateway's `X-Forwarded-*` headers — required because the DPoP
+proof's `htu` claim is bound to the Gateway's public URL (`http://localhost:8080/...`), not each
+service's own internal port. `@AuthenticationPrincipal Jwt` in `ApiController`/
+`SettingsController` needed no changes: `DPoPAuthenticationProvider` delegates token validation
+to the same JWT authentication manager and stores the resulting `JwtAuthenticationToken` in the
+security context, exactly as plain Bearer auth did.
 
-The earlier audience error was corrected by changing `api://default` to:
+Verified: `./gradlew clean compileJava test` passes for gateway, service-1, and service-2 after
+the change.
 
-```text
-https://ntrsoiesys.oktapreview.com
-```
+### Follow-up: `invalid_dpop_proof` after the above fix
 
-The remaining failure occurs at Service 1 resource-server authentication, before either controller executes. Consequently, the Service 1 to Service 2 private-key JWT call has not yet been reached in this test path.
+After the fix above, the next symptom was `DPoP error="invalid_dpop_proof"` instead of
+"Invalid bearer token" — progress, since Service 1/2 were now genuinely running DPoP proof
+validation. Root cause (confirmed by decompiling `spring-cloud-gateway-server-4.3.4.jar`):
+`XForwardedHeadersFilter` (the bean that adds `X-Forwarded-Host`/`Proto`/`Port` when proxying)
+is only registered when `spring.cloud.gateway.server.webflux.trusted-proxies` is explicitly set
+to a non-empty value (`XForwardedTrustedProxiesCondition` requires it). This project never set
+that property, so the filter was never registered and Service 1/2 never received forwarded-host
+info — `server.forward-headers-strategy: framework` had nothing to act on, so
+`HttpServletRequest.getRequestURL()` still resolved to each service's own internal port
+(`:8081`/`:8082`), mismatching the DPoP proof's `htu` claim (bound to the Gateway's public
+`:8080` URL).
+
+Fix: added `spring.cloud.gateway.server.webflux.trusted-proxies:
+127\.0\.0\.1|::1|0:0:0:0:0:0:0:1` to `gateway/application.yml` (matches loopback, since only the
+Gateway process calls Service 1/2 directly in this local setup). Verified via direct testing
+(temporarily permitting an unauthenticated route and adding throwaway diagnostic logging, since
+removed) that Service 1 now reconstructs `requestURL=http://localhost:8080/api/service-1/ping`
+— matching the Gateway's public URL — instead of its own internal port.
 
 ## Remaining Investigation Plan
 
-1. Read the new Service 1 runtime diagnostics immediately after a failing request and determine whether Service 1 receives `Bearer` or `DPoP`, whether the token is a three-segment JWT, and the decoder validation cause.
-2. Compare the token issuer, audience, key ID, expiry, and DPoP confirmation (`cnf.jkt`) claim against the configured Okta authorization server without exposing the token value.
-3. Verify the Gateway authorization-header conversion runs after DPoP validation and before proxying to Service 1.
-4. If the token is valid at the Gateway but rejected by Service 1 because it is DPoP-bound, establish an explicit internal trust mechanism instead of forwarding the browser token as a generic Bearer token. Options include a separate gateway-to-service client token or a signed internal identity token.
-5. After Service 1 accepts the external request, test `/api/service-1/hello` and then diagnose the Service 1 to Service 2 `private_key_jwt` token request independently.
+1. Run a live browser end-to-end test: sign in, then exercise both diagnostic buttons, and
+   confirm the DPoP proof/JWT metadata now renders instead of an error. This still needs a real
+   Okta session and hasn't been verified live yet.
+2. After Service 1 accepts the external request, test `/api/service-1/hello` and confirm the
+   Service 1 to Service 2 `private_key_jwt` client-credentials call still succeeds unchanged.
 
 ## Important Files
 
