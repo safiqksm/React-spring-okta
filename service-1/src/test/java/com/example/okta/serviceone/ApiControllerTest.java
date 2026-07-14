@@ -7,7 +7,9 @@ class ApiControllerTest {
     private final ApiController controller = new ApiController(
             RestClient.create(),
             new ServiceTwoTokenProvider(RestClient.create(), "", "", "", ""),
-            "http://localhost:8082");
+            new ServiceThreeTokenProvider(RestClient.create(), "", "", "", "", ""),
+            "http://localhost:8082",
+            "http://localhost:8083");
 
     private Jwt testJwt() {
         return Jwt.withTokenValue("test-token")

@@ -61,6 +61,10 @@ export function getServiceChain(oktaAuth) {
   return request(oktaAuth, '/api/service-1/hello');
 }
 
+export function getServiceThreeObo(oktaAuth) {
+  return request(oktaAuth, '/api/service-1/obo-hello');
+}
+
 export function getServiceOne(oktaAuth) {
   return request(oktaAuth, '/api/service-1/ping');
 }

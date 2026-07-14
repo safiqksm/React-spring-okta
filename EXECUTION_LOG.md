@@ -22,7 +22,7 @@ Add an entry for every meaningful change or issue.
 | P1-04 | 1 | Secure services and Service 1 -> Service 2 call | Planned | Integration tests pass | |
 | P1-05 | 1 | Run end-to-end authentication and API tests | Planned | E2E test passes | |
 | P2-01 | 2 | Add DPoP issuance and validation | Planned | DPoP tests pass | |
-| P3-01 | 3 | Add Okta on-behalf-of token exchange | Planned | Delegation tests pass | |
+| P3-01 | 3 | Add Okta on-behalf-of token exchange | In Progress | Delegation tests pass | New `service-3` module and Service 1 `ServiceThreeTokenProvider` scaffolded on `feature/service3-okta-obo`; needs a dedicated Okta Service App (Token Exchange grant, `service3.read` scope, access policy) before it can be exercised live |
 | P4-01 | 4 | Add pushed authorization requests | Planned | PAR tests pass | |
 | P5-01 | 5 | Evaluate containerization and deployment | Planned | Deployment plan approved | Deferred until local phases pass |
 | P5-02 | 5 | Implement real Okta factor management | Planned | Okta enroll/remove tests pass | Never expose Okta API tokens to SPA |
@@ -63,3 +63,24 @@ Add an entry for every meaningful change or issue.
   Service 2 (`8082`).
 - Added unit tests for Service 2 and simulated factor responses; `./gradlew test`
   and `npm run build` pass.
+
+### 2026-07-14 - Phase 3 Service 3 / OBO scaffold started
+
+- Created branch `feature/service3-okta-obo` off the DPoP/PAR fix branch.
+- Updated `PLAN.md` Phase 3 with a concrete plan grounded in Okta's token
+  exchange guide (developer.okta.com/docs/guides/set-up-token-exchange).
+- Added the `service-3` Gradle module (port `8083`, `SCOPE_service3.read` on
+  `/api/service-3/**`, no Gateway route — reachable only from Service 1).
+- Added `ServiceThreeTokenProvider` in Service 1, performing RFC 8693 token
+  exchange (`grant_type=urn:ietf:params:oauth:grant-type:token-exchange`)
+  authenticated with `client_secret_basic` against a dedicated Okta Service
+  App (Decision 7/8 resolved: dedicated app, client secret to start).
+- Added `GET /api/service-1/obo-hello` in `ApiController`, and a third SPA
+  diagnostic button plus a `service3Jwt` card in `App.jsx`, mirroring the
+  existing `service2Jwt` pattern.
+- `./gradlew clean compileJava test` and `npm run build` pass. Live
+  verification still needs the Okta admin console setup described in
+  `PLAN.md` Phase 3 (dedicated Service App, `service3.read` scope, access
+  policy) — `SERVICE_THREE_CLIENT_ID`/`SERVICE_THREE_CLIENT_SECRET` are
+  unset by default, so `ServiceThreeTokenProvider` will fail fast with a
+  clear error until they're configured.

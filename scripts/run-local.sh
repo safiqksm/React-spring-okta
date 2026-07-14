@@ -16,13 +16,15 @@ if ! command -v java >/dev/null 2>&1; then
 fi
 
 cleanup() {
-  kill "${frontend_pid:-}" "${gateway_pid:-}" "${service_one_pid:-}" "${service_two_pid:-}" 2>/dev/null || true
+  kill "${frontend_pid:-}" "${gateway_pid:-}" "${service_one_pid:-}" "${service_two_pid:-}" "${service_three_pid:-}" 2>/dev/null || true
 }
 
 trap cleanup EXIT INT TERM
 
 ./gradlew bootJar
 
+java -jar service-3/build/libs/service-3-0.0.1-SNAPSHOT.jar &
+service_three_pid=$!
 java -jar service-2/build/libs/service-2-0.0.1-SNAPSHOT.jar &
 service_two_pid=$!
 java -jar service-1/build/libs/service-1-0.0.1-SNAPSHOT.jar &

@@ -2,7 +2,7 @@ import React from 'react';
 import { LoginCallback, useOktaAuth } from '@okta/okta-react';
 import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { isConfigured, signInWithPar } from './auth';
-import { changeFactor, getServiceChain, getServiceOne } from './api';
+import { changeFactor, getServiceChain, getServiceOne, getServiceThreeObo } from './api';
 
 function Layout({ children }) {
   const { oktaAuth, authState } = useOktaAuth();
@@ -40,6 +40,7 @@ function Home() {
   const [message, setMessage] = React.useState('');
   const [validatedJwt, setValidatedJwt] = React.useState(null);
   const [service2Jwt, setService2Jwt] = React.useState(null);
+  const [service3Jwt, setService3Jwt] = React.useState(null);
   const [dpopProof, setDpopProof] = React.useState(null);
   const [serviceResult, setServiceResult] = React.useState('');
   const claims = authState?.idToken?.claims;
@@ -50,11 +51,13 @@ function Home() {
       setMessage(result.message);
       setValidatedJwt(result.jwt);
       setService2Jwt(result.service2Jwt);
+      setService3Jwt(null);
       setDpopProof(result.dpopProof);
     } catch (error) {
       setMessage(error.message);
       setValidatedJwt(null);
       setService2Jwt(null);
+      setService3Jwt(null);
       setDpopProof(null);
     }
   }
@@ -66,12 +69,31 @@ function Home() {
       setServiceResult(result.message);
       setValidatedJwt(result.jwt);
       setService2Jwt(null);
+      setService3Jwt(null);
       setDpopProof(result.dpopProof);
     } catch (error) {
       setMessage(error.message);
       setServiceResult('');
       setValidatedJwt(null);
       setService2Jwt(null);
+      setService3Jwt(null);
+      setDpopProof(null);
+    }
+  }
+
+  async function callServiceThreeObo() {
+    try {
+      const result = await getServiceThreeObo(oktaAuth);
+      setMessage(result.message);
+      setValidatedJwt(result.jwt);
+      setService2Jwt(null);
+      setService3Jwt(result.service3Jwt);
+      setDpopProof(result.dpopProof);
+    } catch (error) {
+      setMessage(error.message);
+      setValidatedJwt(null);
+      setService2Jwt(null);
+      setService3Jwt(null);
       setDpopProof(null);
     }
   }
@@ -85,7 +107,7 @@ function Home() {
         <dt>Email</dt><dd>{claims?.email || 'Not provided'}</dd>
         <dt>Subject</dt><dd className="wrap">{claims?.sub}</dd>
       </dl></section>
-      <section className="card"><h2>Service checks</h2><p>Call Service 1 first, then test the Service 1 to Service 2 private-key JWT hop.</p><div className="actions"><button className="primary-button" onClick={callServiceOne}>Call Service 1</button><button className="secondary-button" onClick={callServices}>Call Service 1 to Service 2</button></div>{message && <p className="result" role="status">{message}{serviceResult && ` ${serviceResult}`}</p>}</section>
+      <section className="card"><h2>Service checks</h2><p>Call Service 1 first, then test the Service 1 to Service 2 private-key JWT hop, or the Service 1 to Service 3 on-behalf-of token exchange.</p><div className="actions"><button className="primary-button" onClick={callServiceOne}>Call Service 1</button><button className="secondary-button" onClick={callServices}>Call Service 1 to Service 2</button><button className="secondary-button" onClick={callServiceThreeObo}>Call Service 1 to Service 3 (OBO)</button></div>{message && <p className="result" role="status">{message}{serviceResult && ` ${serviceResult}`}</p>}</section>
       {validatedJwt && <section className="card"><h2>Validated access token</h2><dl>
         <dt>Subject</dt><dd className="wrap">{validatedJwt.subject}</dd>
         <dt>Issuer</dt><dd className="wrap">{validatedJwt.issuer}</dd>
@@ -99,6 +121,13 @@ function Home() {
         <dt>Expires</dt><dd>{service2Jwt.expiresAt}</dd>
         <dt>Scopes</dt><dd>{service2Jwt.scopes?.join(', ') || 'None'}</dd>
         <dt>Fingerprint</dt><dd className="token-fingerprint">{service2Jwt.tokenFingerprint}</dd>
+      </dl></section>}
+      {service3Jwt && <section className="card"><h2>Service 1 → Service 3 token (OBO)</h2><p>Token-exchanged: same user subject as your own token, scope narrowed to service3.read.</p><dl>
+        <dt>Subject</dt><dd className="wrap">{service3Jwt.subject}</dd>
+        <dt>Issuer</dt><dd className="wrap">{service3Jwt.issuer}</dd>
+        <dt>Expires</dt><dd>{service3Jwt.expiresAt}</dd>
+        <dt>Scopes</dt><dd>{service3Jwt.scopes?.join(', ') || 'None'}</dd>
+        <dt>Fingerprint</dt><dd className="token-fingerprint">{service3Jwt.tokenFingerprint}</dd>
       </dl></section>}
       {dpopProof && <section className="card"><h2>DPoP proof</h2><dl>
         <dt>Method</dt><dd>{dpopProof.method}</dd>

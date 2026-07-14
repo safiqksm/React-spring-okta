@@ -19,16 +19,22 @@ public class ApiController {
     private static final Logger LOGGER = LoggerFactory.getLogger(ApiController.class);
     private final RestClient restClient;
     private final String serviceTwoUrl;
+    private final String serviceThreeUrl;
 
     private final ServiceTwoTokenProvider serviceTwoTokenProvider;
+    private final ServiceThreeTokenProvider serviceThreeTokenProvider;
 
     public ApiController(
             RestClient restClient,
             ServiceTwoTokenProvider serviceTwoTokenProvider,
-            @Value("${service-two.url}") String serviceTwoUrl) {
+            ServiceThreeTokenProvider serviceThreeTokenProvider,
+            @Value("${service-two.url}") String serviceTwoUrl,
+            @Value("${service-three.url}") String serviceThreeUrl) {
         this.restClient = restClient;
         this.serviceTwoTokenProvider = serviceTwoTokenProvider;
+        this.serviceThreeTokenProvider = serviceThreeTokenProvider;
         this.serviceTwoUrl = serviceTwoUrl;
+        this.serviceThreeUrl = serviceThreeUrl;
     }
 
     @GetMapping("/service-1/hello")
@@ -49,6 +55,21 @@ public class ApiController {
     Map<String, Object> ping(@AuthenticationPrincipal Jwt jwt) {
         JwtDebugMetadata.logValidation(LOGGER, "service-1", jwt);
         return Map.of("message", "Service 1 responded", "jwt", JwtDebugMetadata.from(jwt));
+    }
+
+    @GetMapping("/service-1/obo-hello")
+    Map<String, Object> oboHello(@AuthenticationPrincipal Jwt jwt) {
+        JwtDebugMetadata.logValidation(LOGGER, "service-1", jwt);
+        String exchangedToken = serviceThreeTokenProvider.exchange(jwt.getTokenValue());
+        Map<?, ?> serviceThreeResponse = restClient.get()
+                .uri(serviceThreeUrl + "/api/service-3/ping")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + exchangedToken)
+                .retrieve()
+                .body(Map.class);
+        return Map.of(
+                "message", "Gateway -> Service 1 -> " + serviceThreeResponse.get("message") + " (on-behalf-of)",
+                "jwt", JwtDebugMetadata.from(jwt),
+                "service3Jwt", serviceThreeResponse.get("jwt"));
     }
 
 }

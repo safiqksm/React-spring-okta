@@ -102,6 +102,27 @@ access token cannot be used for that internal hop. The UI displays only the
 DPoP proof method, target URI, issued-at time, and proof ID after a successful
 service-chain call; it never renders the raw proof.
 
+### Service 1 to Service 3 (On-Behalf-Of token exchange)
+
+Service 1 can also call Service 3 using Okta's OAuth 2.0 On-Behalf-Of token
+exchange (RFC 8693), instead of client credentials. Unlike the Service 2 hop,
+the resulting token still carries the original signed-in user's `sub` claim,
+narrowed to a `service3.read` scope. This requires a dedicated Okta Service
+App with the **Token Exchange** grant type enabled, plus a `service3.read`
+scope and access policy on the custom authorization server. See `PLAN.md`
+(Phase 3) for the full Okta admin console setup. Set these Service 1
+run-configuration variables:
+
+```text
+SERVICE_THREE_CLIENT_ID=your-service1-to-service3-client-id
+SERVICE_THREE_CLIENT_SECRET=your-service1-to-service3-client-secret
+SERVICE_THREE_CLIENT_SCOPE=service3.read
+SERVICE_THREE_TOKEN_URI=https://your-okta-domain/oauth2/your-authorization-server-id/v1/token
+```
+
+Service 3 requires `SCOPE_service3.read` for `/api/service-3/**` and has no
+Gateway route; it's reached only from inside Service 1.
+
 ## Run locally
 
 To start everything in one terminal:
@@ -110,16 +131,17 @@ To start everything in one terminal:
 ./scripts/run-local.sh
 ```
 
-Or open four terminals from the repository root:
+Or open five terminals from the repository root:
 
 ```bash
+./gradlew :service-3:bootRun
 ./gradlew :service-2:bootRun
 ./gradlew :service-1:bootRun
 ./gradlew :gateway:bootRun
 cd frontend && npm install && npm run dev
 ```
 
-Services run on `8082`, `8081`, and `8080`; Vite runs on `5173`.
+Services run on `8083`, `8082`, `8081`, and `8080`; Vite runs on `5173`.
 
 ## Import into Spring Tool Suite (STS)
 
@@ -128,14 +150,14 @@ Services run on `8082`, `8081`, and `8080`; Vite runs on `5173`.
 2. Select **File > Import > Gradle > Existing Gradle Project**.
 3. Choose this repository root: `React-spring-okta`.
 4. Select the Gradle wrapper when STS asks which Gradle distribution to use.
-5. Finish the import. STS creates the `gateway`, `service-1`, and `service-2`
-   projects.
-6. In the **Boot Dashboard**, start in this order: `service-2`, `service-1`,
-   then `gateway`.
+5. Finish the import. STS creates the `gateway`, `service-1`, `service-2`, and
+   `service-3` projects.
+6. In the **Boot Dashboard**, start in this order: `service-3`, `service-2`,
+   `service-1`, then `gateway`.
 
 For each Spring Boot run configuration, open **Run > Run Configurations >
 Spring Boot App > [service] > Environment** and set these variables. Use the
-same values for all three backend services:
+same values for all four backend services:
 
 ```text
 OKTA_ISSUER=https://your-okta-domain/oauth2/your-authorization-server-id
@@ -154,6 +176,7 @@ a client secret to any STS run configuration for the React SPA.
 export JAVA_HOME="$(brew --prefix openjdk@21)"
 export PATH="$JAVA_HOME/bin:$PATH"
 
+./gradlew :service-3:bootRun
 ./gradlew :service-2:bootRun
 ./gradlew :service-1:bootRun
 ./gradlew :gateway:bootRun
