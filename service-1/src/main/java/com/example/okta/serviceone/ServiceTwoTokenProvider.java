@@ -8,10 +8,12 @@ import com.nimbusds.jose.jwk.source.JWKSource;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
 import org.springframework.security.oauth2.jwt.JwtClaimsSet;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
@@ -44,29 +46,46 @@ class ServiceTwoTokenProvider {
         this.scope = scope;
     }
 
-    String accessToken() {
+    TokenResult accessToken() {
         if (clientId.isBlank() || privateKeyPath.isBlank()) {
             throw new IllegalStateException("SERVICE_TWO_CLIENT_ID and SERVICE_TWO_CLIENT_PRIVATE_KEY_PATH are required");
         }
 
+        String assertion = clientAssertion();
         MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
         form.add("grant_type", "client_credentials");
         form.add("scope", scope);
         form.add("client_id", clientId);
         form.add("client_assertion_type", "urn:ietf:params:oauth:client-assertion-type:jwt-bearer");
-        form.add("client_assertion", clientAssertion());
+        form.add("client_assertion", assertion);
 
-        Map<?, ?> response = restClient.post()
+        ResponseEntity<Map> entity = restClient.post()
                 .uri(tokenUri)
                 .contentType(MediaType.APPLICATION_FORM_URLENCODED)
                 .body(form)
                 .retrieve()
-                .body(Map.class);
+                .toEntity(Map.class);
+        Map<?, ?> response = entity.getBody();
         Object accessToken = response == null ? null : response.get("access_token");
         if (!(accessToken instanceof String token) || token.isBlank()) {
             throw new IllegalStateException("Okta did not return a Service 2 access token");
         }
-        return token;
+
+        Map<String, Object> requestSummary = new LinkedHashMap<>();
+        requestSummary.put("method", "POST");
+        requestSummary.put("url", tokenUri);
+        requestSummary.put("body", Map.of(
+                "grant_type", "client_credentials",
+                "scope", scope,
+                "client_id", clientId,
+                "client_assertion_type", "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+                "client_assertion", assertion));
+
+        Map<String, Object> responseSummary = new LinkedHashMap<>();
+        responseSummary.put("status", entity.getStatusCode().value());
+        responseSummary.put("body", response);
+
+        return new TokenResult(token, requestSummary, responseSummary);
     }
 
     private String clientAssertion() {

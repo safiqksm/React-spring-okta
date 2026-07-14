@@ -13,16 +13,10 @@ async function request(oktaAuth, path, options = {}) {
   const dpopHeaders = oktaAuth.options.dpop
     ? await oktaAuth.getDPoPAuthorizationHeaders({ url, method })
     : { Authorization: `Bearer ${accessToken}` };
+  const requestHeaders = { ...dpopHeaders, 'Content-Type': 'application/json', ...options.headers };
 
   console.debug('api.request', { method, path, dpop: oktaAuth.options.dpop === true });
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      ...dpopHeaders,
-      'Content-Type': 'application/json',
-      ...options.headers
-    }
-  });
+  const response = await fetch(url, { ...options, headers: requestHeaders });
 
   if (!response.ok) {
     const dpopFailure = response.headers.get('X-DPoP-Validation');
@@ -40,9 +34,16 @@ async function request(oktaAuth, path, options = {}) {
     throw new Error(`Request failed with status ${response.status}.`);
   }
   const result = await response.json();
+  const responseHeaders = {};
+  response.headers.forEach((value, key) => { responseHeaders[key] = value; });
+
   return {
     ...result,
-    dpopProof: dpopHeaders.DPoP ? dpopProofDetails(dpopHeaders.DPoP) : null
+    dpopProof: dpopHeaders.DPoP ? dpopProofDetails(dpopHeaders.DPoP) : null,
+    browserToGateway: {
+      request: { method, url, headers: requestHeaders, body: options.body || null },
+      response: { status: response.status, headers: responseHeaders, body: result }
+    }
   };
 }
 
@@ -53,7 +54,8 @@ function dpopProofDetails(proof) {
     method: payload.htm,
     targetUri: payload.htu,
     issuedAt: payload.iat ? new Date(payload.iat * 1000).toISOString() : undefined,
-    proofId: payload.jti
+    proofId: payload.jti,
+    raw: proof
   };
 }
 

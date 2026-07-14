@@ -15,6 +15,13 @@ if ! command -v java >/dev/null 2>&1; then
   exit 1
 fi
 
+if [ -f secrets/service-1.env ]; then
+  set -a
+  # shellcheck disable=SC1091
+  source secrets/service-1.env
+  set +a
+fi
+
 cleanup() {
   kill "${frontend_pid:-}" "${gateway_pid:-}" "${service_one_pid:-}" "${service_two_pid:-}" "${service_three_pid:-}" 2>/dev/null || true
 }

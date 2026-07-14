@@ -98,13 +98,14 @@ export async function signInWithPar(originalUri) {
   }
 
   console.debug('auth.par.submit', { endpoint: parEndpoint });
+  const requestBody = parRequestBody(tokenParams);
   const response = await fetch(parEndpoint, {
     method: 'POST',
     headers: {
       Accept: 'application/json',
       'Content-Type': 'application/x-www-form-urlencoded'
     },
-    body: new URLSearchParams(parRequestBody(tokenParams))
+    body: new URLSearchParams(requestBody)
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok || !payload.request_uri) {
@@ -123,5 +124,35 @@ export async function signInWithPar(originalUri) {
     endpoint: authorizeUrl.origin + authorizeUrl.pathname,
     usesRequestUri: true
   });
+
+  try {
+    sessionStorage.setItem('okta_login_trace', JSON.stringify({
+      par: {
+        request: {
+          method: 'POST',
+          url: parEndpoint,
+          headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: requestBody
+        },
+        response: { status: response.status, body: payload }
+      },
+      authorizeUrl: authorizeUrl.toString()
+    }));
+  } catch {
+    /* sessionStorage unavailable — the login flow still works without the trace */
+  }
+
   window.location.assign(authorizeUrl.toString());
+}
+
+// Read back the PAR request/response captured just before the redirect to Okta, so the
+// UI can show it after the browser returns from login. Persisted in sessionStorage since
+// it must survive the full-page navigation to Okta's /authorize endpoint and back.
+export function getLoginTrace() {
+  try {
+    const raw = sessionStorage.getItem('okta_login_trace');
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
 }

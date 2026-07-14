@@ -21,6 +21,9 @@ final class JwtDebugMetadata {
         metadata.put("expiresAt", String.valueOf(jwt.getExpiresAt()));
         metadata.put("scopes", scopes(jwt));
         metadata.put("tokenFingerprint", fingerprint(jwt));
+        // Raw token is intentionally included for this teaching/demo UI, which decodes and
+        // displays it client-side to the same user the token already belongs to.
+        metadata.put("raw", jwt.getTokenValue());
         return metadata;
     }
 
