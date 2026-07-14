@@ -446,6 +446,15 @@ trade-off, not an oversight:
   responds `204`, and the deny list contains the subject; (2) a subsequent SPA
   call gets rejected; (3) only then graduate to policy-driven (ITP) triggers.
 
+**Status (2026-07-14): blocked on step (1).** Code is implemented and unit
+tested (commit `baceb52` on `feature/global-token-revocation`); the manual
+`Clear user sessions` trigger has been exercised three times against a real
+tunnel-exposed Gateway with correct config (URL, user assignment, ITP
+enabled), and Okta's System Log reports `Universal Logout: SUCCESS` each
+time, but zero calls have reached the Gateway. See `EXECUTION_LOG.md`
+ISSUE-004 — escalated to Okta Support for their server-side delivery logs,
+which aren't customer-visible.
+
 ## Decisions Required Before Implementation
 
 1. Okta SPA client ID, allowed callback/logout URLs, scopes, and API audience.

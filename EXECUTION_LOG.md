@@ -26,6 +26,7 @@ Add an entry for every meaningful change or issue.
 | P4-01 | 4 | Add pushed authorization requests | Planned | PAR tests pass | |
 | P5-01 | 5 | Evaluate containerization and deployment | Planned | Deployment plan approved | Deferred until local phases pass |
 | P5-02 | 5 | Implement real Okta factor management | Planned | Okta enroll/remove tests pass | Never expose Okta API tokens to SPA |
+| P6-01 | 6 | Implement Global Token Revocation (Universal Logout) in the Gateway | Blocked | Live Okta-triggered `204` + deny-list entry | Code complete on `feature/global-token-revocation` (commit `baceb52`); blocked on Okta not dispatching the outbound call — see ISSUE-004 |
 
 ## Problems and Fixes
 
@@ -34,6 +35,7 @@ Add an entry for every meaningful change or issue.
 | ISSUE-001 | 2026-07-13 | Workspace is empty; no application code exists. | Implementation has not started. | Confirmed directory contains no project files. | Create structure after Okta and deployment decisions are provided. | Open | Project skeleton builds. |
 | ISSUE-002 | 2026-07-13 | A confidential-client secret was shared outside secure configuration. | Secret must not be used in the React SPA or committed to source control. | SPA uses Authorization Code with PKCE and is a public client. | Do not store the secret; rotate it in Okta. Use a secret manager or private-key JWT for a future confidential backend client. | Open | Rotated secret and no secret found in repository. |
 | ISSUE-003 | 2026-07-13 | Gateway -> Service 1/2 calls failed with `OAuth2AuthenticationException: Invalid bearer token` after successful DPoP login. | Both UI diagnostic calls and simulated Settings actions failed for any authenticated user with DPoP enabled. | Decompiled `spring-security-oauth2-resource-server-6.5.9.jar`: `BearerTokenAuthenticationFilter` hardcodes a check that rejects any JWT with a `cnf.jkt` claim presented via the `Bearer` scheme (RFC 9449 anti-downgrade safeguard). The Gateway's `InternalAuthorizationHeaderFilter` was rewriting `DPoP` to `Bearer` before proxying, tripping this on every DPoP-bound token. | Removed `InternalAuthorizationHeaderFilter`; Gateway now forwards the `DPoP` scheme and proof header unchanged. Spring Security auto-registers `DPoPAuthenticationConfigurer` on Service 1/2 (no new code needed). Added `server.forward-headers-strategy: framework` to both services so the DPoP proof's `htu` claim (bound to the Gateway's public URL) matches the reconstructed request URL. | Complete (build/tests); browser E2E still pending | `./gradlew clean compileJava test` passes for all three modules. |
+| ISSUE-004 | 2026-07-14 | Okta never dispatches the Global Token Revocation outbound call to the Gateway's `/global-token-revocation` endpoint, despite `Universal Logout: SUCCESS` in Okta's own System Log. | Phase 6 (Universal Logout) cannot be live-tested; the deny-list/enforcement code is unverified against a real Okta call. | Ruled out, in order: (1) tunnel unreachable — no, confirmed working via a phone on cellular (this Mac's own network independently blocks `*.ngrok-free.dev`, unrelated); (2) wrong endpoint URL — no, the value saved in Okta's Logout section matches `REVOCATION_ENDPOINT_URL` exactly; (3) test user not assigned to the SPA app — no, confirmed assigned; (4) wrong manual trigger — no, confirmed using the documented **Directory → People → [user] → More Actions → Clear user sessions**, not the unrelated "End session" action; (5) Front-channel SLO enabled as a possible fix — no effect, and it's an unrelated (browser-based) feature from GTR (back-channel); (6) ITP/AMFA licensing gate — ruled out, ITP is confirmed enabled on this tenant. Triggered three separate times across these attempts; ngrok's own request inspector shows zero inbound connections each time. Okta's public docs (help.okta.com Universal Logout / Universal Logout revocations pages) don't document dispatch timing, retry behavior, or failure conditions at the level needed to diagnose further — this needs Okta's server-side delivery logs, which aren't customer-visible. | None yet — needs an Okta Support case with the exact trigger timestamps from the System Log, asking specifically why no outbound call was dispatched for this app. Gateway-side code (`RevocationDenyList`, `GlobalTokenRevocationController`, `RevocationCheckWebFilter`) is complete, unit-tested, and ready to correctly process a real call once Okta actually sends one. | Open — escalated to Okta Support | N/A until a live call is received; local `curl` tests against the Gateway directly (bypassing Okta) confirm correct `401` handling for missing/invalid auth. |
 
 ## Decision Log
 
@@ -84,3 +86,31 @@ Add an entry for every meaningful change or issue.
   policy) — `SERVICE_THREE_CLIENT_ID`/`SERVICE_THREE_CLIENT_SECRET` are
   unset by default, so `ServiceThreeTokenProvider` will fail fast with a
   clear error until they're configured.
+
+### 2026-07-14 - Phase 6 Universal Logout implemented, live test blocked
+
+- Created branch `feature/global-token-revocation` off `feature/service3-okta-obo`.
+- Updated `PLAN.md` with a concrete Phase 6 plan (Okta's Universal Logout /
+  Global Token Revocation guide): request/response contract, why an
+  in-memory deny list instead of Redis is the right call for this
+  single-process local POC, and a test gate.
+- Installed and authenticated `ngrok`; started a tunnel (static free domain
+  `frenzied-coyness-subscript.ngrok-free.dev` → `localhost:8080`) so Okta's
+  cloud can reach the Gateway. Confirmed the tunnel works from a phone on
+  cellular — this Mac's own network independently blocks `*.ngrok-free.dev`
+  domains (likely corporate EDR/proxy), unrelated to the tunnel itself.
+- Implemented `RevocationDenyList` (in-memory, scheduled sweep),
+  `GlobalTokenRevocationController` (`POST /global-token-revocation`, its
+  own dedicated JWT validation distinct from the SPA's resource-server
+  chain), and `RevocationCheckWebFilter` (rejects requests whose token
+  predates its subject's revocation). `./gradlew clean compileJava test`
+  passes; local `curl` tests confirm correct `401` handling.
+- Configured Okta: Global Token Revocation on the SPA's own app (not the
+  service-to-service apps, which have no end-user session to revoke),
+  Signed JWT auth, `iss_sub` subject format, tunnel URL as the Logout
+  endpoint.
+- Live-tested three times (`Clear user sessions` manual trigger); Okta's
+  System Log shows `Universal Logout: SUCCESS` each time, but zero calls
+  ever reached the Gateway (confirmed via ngrok's own request inspector).
+  See ISSUE-004 — escalated to Okta Support; Gateway-side implementation
+  is complete and ready pending a real dispatched call.
