@@ -23,13 +23,17 @@ public class SecurityConfig {
             new BearerTokenServerAuthenticationEntryPoint();
 
     @Bean
-    SecurityWebFilterChain securityWebFilterChain(ServerHttpSecurity http, DpopProofWebFilter dpopProofWebFilter) {
+    SecurityWebFilterChain securityWebFilterChain(
+            ServerHttpSecurity http,
+            DpopProofWebFilter dpopProofWebFilter,
+            RevocationCheckWebFilter revocationCheckWebFilter) {
         return http
                 .csrf(ServerHttpSecurity.CsrfSpec::disable)
                 .cors(Customizer.withDefaults())
                 .authorizeExchange(exchanges -> exchanges
                         .pathMatchers(HttpMethod.OPTIONS).permitAll()
                         .pathMatchers("/actuator/health", "/actuator/info").permitAll()
+                        .pathMatchers("/global-token-revocation").permitAll()
                         .anyExchange().authenticated())
                 .exceptionHandling(exceptions -> exceptions.authenticationEntryPoint((exchange, exception) -> {
                     LOGGER.debug("jwt_validation_failure component=gateway path={} reason={}",
@@ -55,6 +59,7 @@ public class SecurityConfig {
                         })
                         .jwt(Customizer.withDefaults()))
                 .addFilterAfter(dpopProofWebFilter, SecurityWebFiltersOrder.AUTHENTICATION)
+                .addFilterAfter(revocationCheckWebFilter, SecurityWebFiltersOrder.AUTHENTICATION)
                 .build();
     }
 

@@ -4,6 +4,11 @@ app:
   dpop:
     required: ${DPOP_REQUIRED:true}
     debug-headers: ${DPOP_DEBUG_HEADERS:true}
+  revocation:
+    issuer: ${REVOCATION_ISSUER:${OKTA_ISSUER:https://ntrsoiesys.oktapreview.com/oauth2/aus11aowjcqDJAtVk1d8}}
+    endpoint-url: ${REVOCATION_ENDPOINT_URL:}
+    max-token-lifetime-seconds: ${REVOCATION_MAX_TOKEN_LIFETIME_SECONDS:3600}
+    sweep-interval-ms: ${REVOCATION_SWEEP_INTERVAL_MS:300000}
 spring:
   application:
     name: gateway
