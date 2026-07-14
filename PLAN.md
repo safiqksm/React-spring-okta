@@ -303,6 +303,149 @@ Begin this phase only after Phases 1 through 4 are complete and tested locally.
   containerized application is validated.
 - Run deployment-specific integration, security, and operational tests.
 
+## Phase 6: Universal Logout (Global Token Revocation)
+
+Reference: [Okta Global Token Revocation (Universal Logout) developer guide](https://developer.okta.com/docs/guides/universal-logout/).
+Universal Logout (UL) is Okta's back-channel, server-to-server kill switch: when
+Okta detects a risk change (Identity Threat Protection) or an admin clicks
+**Clear user sessions**, Okta's cloud calls an app-specific endpoint over HTTPS
+and tells it "terminate everything for this subject." No browser is involved —
+unlike SAML SLO or front-channel OIDC logout, which this is not and should not
+be called in any doc or diagram for this repo. Okta's own request contract:
+
+```
+POST /global-token-revocation HTTP/1.1
+Content-Type: application/json
+Authorization: Bearer <signed JWT, typ=global-token-revocation+jwt, aud=this exact URL, 5 min exp>
+
+{"sub_id": {"format": "iss_sub", "iss": "https://yourOktaOrg.okta.com", "sub": "00u1a2b3c4d5e6f7g8h9"}}
+```
+
+The body carries **who** to revoke, never a token value — this app is
+responsible for finding and invalidating whatever it issued to that subject.
+That's the core problem this phase solves: this Gateway validates JWTs
+statelessly (signature + claims, no per-request lookup), so there is no
+session row anywhere to delete. The only way to "revoke" a token that's
+already been handed to the browser is to fake it with a deny list: every
+authenticated request gets one extra check, after normal JWT validation
+already passed — *is this subject's token older than the last time Okta told
+us to revoke them?*
+
+### Scope for this phase: Gateway only, in-memory deny list
+
+Enforcement lives entirely in the Gateway — the sole entry point from the
+browser. Service 1/2/3 are not touched: Service 1 → Service 2 uses a
+client-credentials token (no user subject to revoke), and Service 1 → Service
+3's OBO-exchanged token is separately scoped and short-lived, so stopping the
+original browser → Gateway hop is what actually matters here. If a revoked
+user's already-forwarded token could still reach Service 1 within its natural
+lifetime, that's an accepted gap for this phase (see Decision 15).
+
+Per your own ask, the deny list is **in-memory**, not Redis — a
+`ConcurrentHashMap<String, Instant>` keyed by the JWT `sub` claim, value =
+when that subject was last revoked. This is a deliberate, documented
+trade-off, not an oversight:
+
+- It only protects the single Gateway process it lives in. If this project is
+  ever run as multiple replicas (Phase 5 containerization), a revocation
+  handled by one replica is invisible to the others — an in-memory map has no
+  way to see across processes. Redis (or an equivalent shared, low-latency
+  store) becomes a hard requirement the moment Phase 5 introduces more than
+  one Gateway instance. Since Phase 5 is explicitly deferred and this project
+  runs as one Gateway process locally, that limitation doesn't apply yet.
+- It does not survive a Gateway restart — every revocation is forgotten on
+  restart. Acceptable for a local POC; would need to be called out prominently
+  if this code is ever the basis for something that runs in production.
+- It needs its own cleanup, since a plain map has no TTL. A revocation entry
+  only matters until every token issued before it would have expired anyway
+  (after that, the token was going to fail signature/expiry validation
+  regardless) — so a scheduled sweep removes entries older than the
+  configured access-token lifetime (Decision 16).
+
+### Gateway changes
+
+- **`RevocationDenyList`** (`gateway/.../RevocationDenyList.java`), a
+  `@Component` wrapping a `ConcurrentHashMap<String, Instant>`:
+  - `void revoke(String subject)` — `put(subject, Instant.now())`.
+  - `boolean isRevoked(String subject, Instant tokenIssuedAt)` — `true` when
+    the map has an entry for `subject` and `tokenIssuedAt` is before it.
+  - A `@Scheduled` sweep (fixed delay, e.g. every 5 minutes) removes entries
+    older than `app.revocation.max-token-lifetime` (Decision 16).
+- **`GlobalTokenRevocationController`** (`gateway/.../GlobalTokenRevocationController.java`),
+  a plain `@RestController` (Gateway can host its own controllers alongside
+  `RouteConfig`'s proxied routes) exposing `POST /global-token-revocation`:
+  1. Validate the `Authorization: Bearer <jwt>` header with a **dedicated**
+     `ReactiveJwtDecoder` — this is *not* the same decoder the
+     `oauth2ResourceServer()` chain in `SecurityConfig` uses for the SPA's own
+     access tokens, because the audience is completely different (this
+     endpoint's own URL, not the API audience). Validate: signature against
+     Okta's JWKS, `aud` equals this endpoint's exact configured URL, `typ`
+     header equals `global-token-revocation+jwt`, not expired.
+  2. Parse `sub_id` from the JSON body per the configured subject format
+     (Decision 14) and resolve it to the same `sub` value this Gateway's own
+     JWT validation already sees in access tokens.
+  3. Call `revocationDenyList.revoke(subject)`.
+  4. Return `204`; `400` if the body doesn't parse; log subject/issuer/outcome
+     only, in keeping with this repo's existing metadata-only logging
+     convention — never log the incoming JWT or request body verbatim.
+  - Okta reads only the HTTP status code, not the response body — don't build
+    a structured error payload expecting Okta to consume it.
+- **`SecurityConfig.java`**: add `/global-token-revocation` to the
+  `permitAll()` matchers alongside `/actuator/health` — this endpoint has its
+  own bespoke authentication (step 1 above), not the SPA's OAuth2 resource
+  server chain.
+- **`RevocationCheckWebFilter`** (`gateway/.../RevocationCheckWebFilter.java`),
+  a new `WebFilter` mirroring `DpopProofWebFilter`'s shape — registered via
+  `addFilterAfter(..., SecurityWebFiltersOrder.AUTHENTICATION)`, so it runs
+  after normal JWT validation already succeeded. Reads the authenticated
+  `JwtAuthenticationToken`'s `sub` and `iat` claims; if
+  `revocationDenyList.isRevoked(sub, iat)`, completes the response with `401`
+  and a distinguishing header (e.g. `X-Session-Revoked: true`) instead of
+  calling `chain.filter(exchange)` — mirrors `DpopProofWebFilter.reject(...)`.
+- **Frontend** (stretch, not required for the Gateway-side mechanism to work):
+  `frontend/src/api.js`'s existing response-header-to-error-message mapping
+  gains a case for `X-Session-Revoked`, distinct from the existing
+  `X-Authentication-Failure`/`X-DPoP-Validation` cases, so the SPA can react
+  by clearing its local tokens and redirecting to sign-in — but this is purely
+  reactive on the SPA's *next* request; nothing in this design pushes the
+  revocation to an idle browser tab (that would be a separate WebSocket/SSE
+  feature, out of scope here).
+
+### Okta admin console configuration
+
+1. **Applications → Applications → [this app] → Sign On tab → Logout
+   section → Edit.**
+2. Under **Global Token Revocation**, select **Okta system or admin initiates
+   logout**.
+3. **Logout endpoint URL**: must be HTTPS and reachable from Okta's cloud —
+   `http://localhost:8080/...` is not reachable from Okta, so local testing
+   needs a public tunnel (Decision 12).
+4. **Endpoint authentication type**: `Signed JWT` — the only option for a
+   generic OIDC app; there is no shared-secret alternative.
+5. **Subject format**: `Issuer and Subject Identifier` (`iss_sub`) is
+   recommended over `Email Identifier` — it's the immutable Okta user ID, not
+   an email that can change or need case-insensitive matching (Decision 14).
+6. Save, then configure the actual triggers separately: ITP entity risk
+   policies (requires the ITP SKU — Decision 13) for automatic firing, or the
+   manual **Clear user sessions** action on a user's profile for testing.
+
+### Phase 6 test gate
+
+- Unit test `RevocationDenyList`: revoke then check a token issued before
+  (revoked) and after (not revoked) the revocation instant; verify the sweep
+  removes entries older than the configured lifetime.
+- Unit test the GTR endpoint's JWT validation: reject wrong `aud`, wrong
+  `typ`, expired, and bad-signature cases without touching the deny list.
+- Integration test: POST a validly-shaped signed JWT + `iss_sub` body, assert
+  `204` and that the subject is now revoked; malformed body → `400`.
+- Integration test `RevocationCheckWebFilter`: a request with a token whose
+  `sub`/`iat` is on the deny list is rejected with `401` and
+  `X-Session-Revoked`; an unrevoked or post-revocation-issued token passes.
+- Live test, in this order (cleanest signal first): (1) manual **Clear user
+  sessions** from the user's Okta profile — confirm the Gateway logs the POST,
+  responds `204`, and the deny list contains the subject; (2) a subsequent SPA
+  call gets rejected; (3) only then graduate to policy-driven (ITP) triggers.
+
 ## Decisions Required Before Implementation
 
 1. Okta SPA client ID, allowed callback/logout URLs, scopes, and API audience.
@@ -326,3 +469,30 @@ Begin this phase only after Phases 1 through 4 are complete and tested locally.
    than introducing a second audience.
 10. Confirm Service 3 stays internal-only (no Gateway route) versus adding a
     public route for it later.
+11. Confirm this app's **Sign On tab** actually shows a **Logout** section —
+    it only appears once the app is fully configured and saved, and only if
+    the org has the Universal Logout feature.
+12. **Local testing reachability** for Phase 6: Okta's cloud must reach the
+    revocation endpoint over public HTTPS. Decide the tunnel approach for
+    local dev (ngrok, Cloudflare Tunnel, or similar) since `localhost` cannot
+    be configured directly in Okta.
+13. Confirm the org has the **ITP SKU** on Identity Engine if automatic,
+    risk-triggered revocation is wanted (Phase 6); manual **Clear user
+    sessions** works without it. Also confirm **Federation Broker Mode** is
+    not enabled for this app — Universal Logout doesn't work with custom
+    SAML/OIDC apps under FBM.
+14. Confirm the exact `iss` value Okta sends in `iss_sub`-format Global Token
+    Revocation bodies matches (or can be mapped to) the `iss`/`sub` claims
+    this Gateway already validates on ordinary access tokens — this app's
+    tokens come from a *custom* authorization server
+    (`.../oauth2/aus11aowjcqDJAtVk1d8`), and the GTR body's `iss` may
+    reference the org-level issuer instead; don't assume they match without
+    checking a real payload.
+15. Confirm Gateway-only Universal Logout enforcement (not extended to
+    Service 1/2/3) is acceptable for Phase 6, given the accepted gap that an
+    already-forwarded token could still reach Service 1 until it naturally
+    expires.
+16. Confirm the actual configured access-token lifetime for this app (commonly
+    a 1-hour default) so Phase 6's `app.revocation.max-token-lifetime` and the
+    deny-list sweep interval are set correctly — too short and a
+    revoked-but-still-valid token could outlive its deny-list entry.
