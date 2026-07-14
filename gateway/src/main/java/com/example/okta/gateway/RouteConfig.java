@@ -10,9 +10,10 @@ public class RouteConfig {
     @Bean
     RouteLocator routes(RouteLocatorBuilder builder) {
         return builder.routes()
-                .route("service-1-api", route -> route.path("/api/service-1/**", "/api/settings/**")
+                .route("service-1-api", route -> route.path("/api/service-1/**")
                         .uri("http://localhost:8081"))
+                .route("service-2-settings-api", route -> route.path("/api/settings/**")
+                        .uri("http://localhost:8082"))
                 .build();
     }
 }
-

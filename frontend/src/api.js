@@ -6,23 +6,63 @@ async function request(oktaAuth, path, options = {}) {
     throw new Error('Your session has no access token. Please sign in again.');
   }
 
-  const response = await fetch(`${apiBaseUrl}${path}`, {
+  const url = `${apiBaseUrl}${path}`;
+  const method = options.method || 'GET';
+  const accessTokenMetadata = await oktaAuth.tokenManager.get('accessToken');
+  console.debug('api.access_token_metadata', { audience: accessTokenMetadata?.claims?.aud });
+  const dpopHeaders = oktaAuth.options.dpop
+    ? await oktaAuth.getDPoPAuthorizationHeaders({ url, method })
+    : { Authorization: `Bearer ${accessToken}` };
+
+  console.debug('api.request', { method, path, dpop: oktaAuth.options.dpop === true });
+  const response = await fetch(url, {
     ...options,
     headers: {
-      Authorization: `Bearer ${accessToken}`,
+      ...dpopHeaders,
       'Content-Type': 'application/json',
       ...options.headers
     }
   });
 
   if (!response.ok) {
+    const dpopFailure = response.headers.get('X-DPoP-Validation');
+    if (dpopFailure) {
+      throw new Error(`DPoP validation failed: ${dpopFailure}.`);
+    }
+    const authenticationFailure = response.headers.get('WWW-Authenticate');
+    const gatewayFailure = response.headers.get('X-Authentication-Failure');
+    if (gatewayFailure) {
+      throw new Error(`Gateway token validation failed: ${gatewayFailure}.`);
+    }
+    if (authenticationFailure) {
+      throw new Error(`Access token rejected: ${authenticationFailure}.`);
+    }
     throw new Error(`Request failed with status ${response.status}.`);
   }
-  return response.json();
+  const result = await response.json();
+  return {
+    ...result,
+    dpopProof: dpopHeaders.DPoP ? dpopProofDetails(dpopHeaders.DPoP) : null
+  };
+}
+
+function dpopProofDetails(proof) {
+  const encodedPayload = proof.split('.')[1];
+  const payload = JSON.parse(atob(encodedPayload.replace(/-/g, '+').replace(/_/g, '/')));
+  return {
+    method: payload.htm,
+    targetUri: payload.htu,
+    issuedAt: payload.iat ? new Date(payload.iat * 1000).toISOString() : undefined,
+    proofId: payload.jti
+  };
 }
 
 export function getServiceChain(oktaAuth) {
   return request(oktaAuth, '/api/service-1/hello');
+}
+
+export function getServiceOne(oktaAuth) {
+  return request(oktaAuth, '/api/service-1/ping');
 }
 
 export function changeFactor(oktaAuth, action, factorType) {
@@ -31,4 +71,3 @@ export function changeFactor(oktaAuth, action, factorType) {
     body: JSON.stringify({ factorType })
   });
 }
-

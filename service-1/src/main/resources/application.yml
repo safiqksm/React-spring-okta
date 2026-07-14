@@ -8,9 +8,14 @@ spring:
       resourceserver:
         jwt:
           issuer-uri: ${OKTA_ISSUER:https://ntrsoiesys.oktapreview.com/oauth2/aus11aowjcqDJAtVk1d8}
-          audiences: ${OKTA_AUDIENCE:api://default}
+          audiences: ${OKTA_AUDIENCE:https://ntrsoiesys.oktapreview.com}
 service-two:
   url: ${SERVICE_TWO_URL:http://localhost:8082}
+  client:
+    token-uri: ${SERVICE_TWO_TOKEN_URI:${OKTA_ISSUER:https://ntrsoiesys.oktapreview.com/oauth2/aus11aowjcqDJAtVk1d8}/v1/token}
+    client-id: ${SERVICE_TWO_CLIENT_ID:0oa11b0i0rqMoVAxU1d8}
+    private-key-path: ${SERVICE_TWO_CLIENT_PRIVATE_KEY_PATH:secrets/service-1-private-key.pem}
+    scope: ${SERVICE_TWO_CLIENT_SCOPE:service2.read}
 management:
   endpoints:
     web:
@@ -19,3 +24,5 @@ management:
 logging:
   level:
     com.example.okta: ${APP_LOG_LEVEL:DEBUG}
+    org.springframework.security.oauth2.server.resource: DEBUG
+    org.springframework.security.oauth2.jwt: DEBUG

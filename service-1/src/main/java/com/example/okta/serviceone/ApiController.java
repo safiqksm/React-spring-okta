@@ -8,8 +8,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -22,19 +20,23 @@ public class ApiController {
     private final RestClient restClient;
     private final String serviceTwoUrl;
 
-    public ApiController(RestClient restClient, @Value("${service-two.url}") String serviceTwoUrl) {
+    private final ServiceTwoTokenProvider serviceTwoTokenProvider;
+
+    public ApiController(
+            RestClient restClient,
+            ServiceTwoTokenProvider serviceTwoTokenProvider,
+            @Value("${service-two.url}") String serviceTwoUrl) {
         this.restClient = restClient;
+        this.serviceTwoTokenProvider = serviceTwoTokenProvider;
         this.serviceTwoUrl = serviceTwoUrl;
     }
 
     @GetMapping("/service-1/hello")
-    Map<String, Object> hello(
-            @RequestHeader(HttpHeaders.AUTHORIZATION) String authorization,
-            @AuthenticationPrincipal Jwt jwt) {
+    Map<String, Object> hello(@AuthenticationPrincipal Jwt jwt) {
         JwtDebugMetadata.logValidation(LOGGER, "service-1", jwt);
         Map<?, ?> serviceTwoResponse = restClient.get()
                 .uri(serviceTwoUrl + "/api/service-2/ping")
-                .header(HttpHeaders.AUTHORIZATION, authorization)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + serviceTwoTokenProvider.accessToken())
                 .retrieve()
                 .body(Map.class);
         return Map.of(
@@ -43,21 +45,10 @@ public class ApiController {
                 "service2Jwt", serviceTwoResponse.get("jwt"));
     }
 
-    @PostMapping("/settings/factors/add")
-    Map<String, String> addFactor(@RequestBody FactorActionRequest request, @AuthenticationPrincipal Jwt jwt) {
-        JwtDebugMetadata.logValidation(LOGGER, "service-1-settings", jwt);
-        return simulatedFactorResponse("added", request.factorType());
+    @GetMapping("/service-1/ping")
+    Map<String, Object> ping(@AuthenticationPrincipal Jwt jwt) {
+        JwtDebugMetadata.logValidation(LOGGER, "service-1", jwt);
+        return Map.of("message", "Service 1 responded", "jwt", JwtDebugMetadata.from(jwt));
     }
 
-    @PostMapping("/settings/factors/remove")
-    Map<String, String> removeFactor(@RequestBody FactorActionRequest request, @AuthenticationPrincipal Jwt jwt) {
-        JwtDebugMetadata.logValidation(LOGGER, "service-1-settings", jwt);
-        return simulatedFactorResponse("removed", request.factorType());
-    }
-
-    private Map<String, String> simulatedFactorResponse(String action, String factorType) {
-        return Map.of("message", "Factor " + action + " (simulated): " + factorType);
-    }
-
-    record FactorActionRequest(String factorType) { }
 }

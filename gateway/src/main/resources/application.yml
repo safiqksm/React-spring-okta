@@ -1,5 +1,9 @@
 server:
   port: 8080
+app:
+  dpop:
+    required: ${DPOP_REQUIRED:true}
+    debug-headers: ${DPOP_DEBUG_HEADERS:true}
 spring:
   application:
     name: gateway
@@ -8,7 +12,7 @@ spring:
       resourceserver:
         jwt:
           issuer-uri: ${OKTA_ISSUER:https://ntrsoiesys.oktapreview.com/oauth2/aus11aowjcqDJAtVk1d8}
-          audiences: ${OKTA_AUDIENCE:api://default}
+          audiences: ${OKTA_AUDIENCE:https://ntrsoiesys.oktapreview.com}
 management:
   endpoints:
     web:

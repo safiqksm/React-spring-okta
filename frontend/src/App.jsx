@@ -1,15 +1,17 @@
 import React from 'react';
 import { LoginCallback, useOktaAuth } from '@okta/okta-react';
 import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
-import { isConfigured } from './auth';
-import { changeFactor, getServiceChain } from './api';
+import { isConfigured, signInWithPar } from './auth';
+import { changeFactor, getServiceChain, getServiceOne } from './api';
 
 function Layout({ children }) {
   const { oktaAuth, authState } = useOktaAuth();
   const location = useLocation();
   const signedIn = authState?.isAuthenticated;
 
-  const signIn = () => oktaAuth.signInWithRedirect({ originalUri: location.pathname });
+  const signIn = () => signInWithPar(location.pathname).catch((error) => {
+    console.error('Okta sign-in could not start.', error);
+  });
 
   return (
     <div className="shell">
@@ -37,6 +39,8 @@ function Home() {
   const { oktaAuth, authState } = useOktaAuth();
   const [message, setMessage] = React.useState('');
   const [validatedJwt, setValidatedJwt] = React.useState(null);
+  const [dpopProof, setDpopProof] = React.useState(null);
+  const [serviceResult, setServiceResult] = React.useState('');
   const claims = authState?.idToken?.claims;
 
   async function callServices() {
@@ -44,9 +48,26 @@ function Home() {
       const result = await getServiceChain(oktaAuth);
       setMessage(result.message);
       setValidatedJwt(result.jwt);
+      setDpopProof(result.dpopProof);
     } catch (error) {
       setMessage(error.message);
       setValidatedJwt(null);
+      setDpopProof(null);
+    }
+  }
+
+  async function callServiceOne() {
+    try {
+      const result = await getServiceOne(oktaAuth);
+      setMessage('Service 1 call succeeded.');
+      setServiceResult(result.message);
+      setValidatedJwt(result.jwt);
+      setDpopProof(result.dpopProof);
+    } catch (error) {
+      setMessage(error.message);
+      setServiceResult('');
+      setValidatedJwt(null);
+      setDpopProof(null);
     }
   }
 
@@ -59,13 +80,19 @@ function Home() {
         <dt>Email</dt><dd>{claims?.email || 'Not provided'}</dd>
         <dt>Subject</dt><dd className="wrap">{claims?.sub}</dd>
       </dl></section>
-      <section className="card"><h2>Service chain</h2><p>Call Service 1 through the Gateway. Service 1 then calls Service 2.</p><button className="primary-button" onClick={callServices}>Call service chain</button>{message && <p className="result" role="status">{message}</p>}</section>
+      <section className="card"><h2>Service checks</h2><p>Call Service 1 first, then test the Service 1 to Service 2 private-key JWT hop.</p><div className="actions"><button className="primary-button" onClick={callServiceOne}>Call Service 1</button><button className="secondary-button" onClick={callServices}>Call Service 1 to Service 2</button></div>{message && <p className="result" role="status">{message}{serviceResult && ` ${serviceResult}`}</p>}</section>
       {validatedJwt && <section className="card"><h2>Validated access token</h2><dl>
         <dt>Subject</dt><dd className="wrap">{validatedJwt.subject}</dd>
         <dt>Issuer</dt><dd className="wrap">{validatedJwt.issuer}</dd>
         <dt>Expires</dt><dd>{validatedJwt.expiresAt}</dd>
         <dt>Scopes</dt><dd>{validatedJwt.scopes?.join(', ') || 'None'}</dd>
         <dt>Fingerprint</dt><dd className="token-fingerprint">{validatedJwt.tokenFingerprint}</dd>
+      </dl></section>}
+      {dpopProof && <section className="card"><h2>DPoP proof</h2><dl>
+        <dt>Method</dt><dd>{dpopProof.method}</dd>
+        <dt>Target URI</dt><dd className="wrap">{dpopProof.targetUri}</dd>
+        <dt>Issued at</dt><dd>{dpopProof.issuedAt}</dd>
+        <dt>Proof ID</dt><dd className="wrap token-fingerprint">{dpopProof.proofId}</dd>
       </dl></section>}
     </div>}
   </Layout>;

@@ -21,6 +21,8 @@ public class SecurityConfig {
                 .csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(requests -> requests
                         .requestMatchers("/actuator/health", "/actuator/info").permitAll()
+                        .requestMatchers("/api/service-2/**").hasAuthority("SCOPE_service2.read")
+                        .requestMatchers("/api/settings/**").authenticated()
                         .anyRequest().authenticated())
                 .exceptionHandling(exceptions -> exceptions.authenticationEntryPoint((request, response, exception) -> {
                     LOGGER.debug("jwt_validation_failure component=service-2 path={} reason={}",

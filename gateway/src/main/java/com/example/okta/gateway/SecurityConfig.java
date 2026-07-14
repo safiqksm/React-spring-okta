@@ -9,6 +9,10 @@ import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity;
 import org.springframework.security.config.web.server.ServerHttpSecurity;
 import org.springframework.security.oauth2.server.resource.web.server.BearerTokenServerAuthenticationEntryPoint;
+import org.springframework.security.oauth2.server.resource.authentication.BearerTokenAuthenticationToken;
+import org.springframework.security.oauth2.server.resource.web.server.authentication.ServerBearerTokenAuthenticationConverter;
+import org.springframework.security.config.web.server.SecurityWebFiltersOrder;
+import org.springframework.security.web.server.authentication.ServerAuthenticationConverter;
 import org.springframework.security.web.server.SecurityWebFilterChain;
 
 @Configuration
@@ -19,9 +23,10 @@ public class SecurityConfig {
             new BearerTokenServerAuthenticationEntryPoint();
 
     @Bean
-    SecurityWebFilterChain securityWebFilterChain(ServerHttpSecurity http) {
+    SecurityWebFilterChain securityWebFilterChain(ServerHttpSecurity http, DpopProofWebFilter dpopProofWebFilter) {
         return http
                 .csrf(ServerHttpSecurity.CsrfSpec::disable)
+                .cors(Customizer.withDefaults())
                 .authorizeExchange(exchanges -> exchanges
                         .pathMatchers(HttpMethod.OPTIONS).permitAll()
                         .pathMatchers("/actuator/health", "/actuator/info").permitAll()
@@ -31,7 +36,37 @@ public class SecurityConfig {
                             exchange.getRequest().getPath(), exception.getClass().getSimpleName());
                     return authenticationEntryPoint.commence(exchange, exception);
                 }))
-                .oauth2ResourceServer(oauth2 -> oauth2.jwt(Customizer.withDefaults()))
+                .oauth2ResourceServer(oauth2 -> oauth2
+                        .bearerTokenConverter(dpopAwareTokenConverter())
+                        .authenticationFailureHandler((webFilterExchange, exception) -> {
+                            webFilterExchange.getExchange().getResponse().setStatusCode(
+                                    org.springframework.http.HttpStatus.UNAUTHORIZED);
+                            webFilterExchange.getExchange().getResponse().getHeaders().set(
+                                    "X-Authentication-Failure",
+                                    exception.getClass().getSimpleName() + ": " + exception.getMessage());
+                            return webFilterExchange.getExchange().getResponse().setComplete();
+                        })
+                        .authenticationEntryPoint((exchange, exception) -> {
+                            exchange.getResponse().setStatusCode(org.springframework.http.HttpStatus.UNAUTHORIZED);
+                            exchange.getResponse().getHeaders().set(
+                                    "X-Authentication-Failure",
+                                    exception.getClass().getSimpleName() + ": " + exception.getMessage());
+                            return exchange.getResponse().setComplete();
+                        })
+                        .jwt(Customizer.withDefaults()))
+                .addFilterAfter(dpopProofWebFilter, SecurityWebFiltersOrder.AUTHENTICATION)
                 .build();
+    }
+
+    private ServerAuthenticationConverter dpopAwareTokenConverter() {
+        ServerBearerTokenAuthenticationConverter bearerTokenConverter = new ServerBearerTokenAuthenticationConverter();
+        return exchange -> {
+            String authorization = exchange.getRequest().getHeaders().getFirst("Authorization");
+            if (authorization != null && authorization.startsWith("DPoP ")) {
+                return reactor.core.publisher.Mono.just(
+                        new BearerTokenAuthenticationToken(authorization.substring("DPoP ".length())));
+            }
+            return bearerTokenConverter.convert(exchange);
+        };
     }
 }
