@@ -183,4 +183,147 @@ at all — those files won't change in the refactor.
 
 ## Part 2 — What changed in the refactor
 
-*(Filled in after the refactor on `feature/gateway-servlet-refactor`.)*
+The whole `gateway` module moved from the reactive/WebFlux stack to the
+plain Servlet stack — the same stack `service-1`, `service-2`, and
+`service-3` already use. The most visible proof this actually happened: the
+startup log line changed from `Netty started on port 8080` to `Tomcat
+started on port 8080 (http)`.
+
+### `gateway/build.gradle`
+
+- Removed `org.springframework.cloud:spring-cloud-starter-gateway-server-webflux`
+  and the `spring-cloud-dependencies` BOM import entirely — Spring Cloud
+  Gateway is gone, not swapped for its `-webmvc` sibling. Given this Gateway
+  only ever proxied two static routes, hand-rolling a plain
+  `@RestController`-based proxy (see below) keeps the whole codebase on one
+  consistent style, rather than trading one framework-specific DSL
+  (reactive `RouteLocatorBuilder`) for another (Spring Cloud Gateway MVC's
+  functional `RouterFunction` DSL).
+- Added `org.springframework.boot:spring-boot-starter-web` — the same
+  dependency every other module already declares.
+
+### `SecurityConfig.java`
+
+| Reactive | Servlet |
+|---|---|
+| `@EnableWebFluxSecurity` | *(nothing needed — Boot auto-configures Servlet security once `spring-boot-starter-web` + `spring-security` are present, same as every `service-*` module)* |
+| `ServerHttpSecurity` | `HttpSecurity` |
+| `SecurityWebFilterChain` | `SecurityFilterChain` |
+| `.authorizeExchange(...)` / `.pathMatchers(...)` | `.authorizeHttpRequests(...)` / `.requestMatchers(...)` |
+| `BearerTokenServerAuthenticationEntryPoint` | `BearerTokenAuthenticationEntryPoint` |
+| `ServerBearerTokenAuthenticationConverter` returning `Mono<Authentication>` | `DefaultBearerTokenResolver` returning a plain `String` — the servlet API is simpler here, since it just needs the raw token value, not a full `Authentication` |
+| `.addFilterAfter(filter, SecurityWebFiltersOrder.AUTHENTICATION)` | `.addFilterAfter(filter, BearerTokenAuthenticationFilter.class)` — reactive positions filters against a named enum step; servlet positions them relative to an actual filter *class* |
+
+One consolidation: the reactive version had both an outer
+`.exceptionHandling().authenticationEntryPoint(...)` and an inner
+`.oauth2ResourceServer().authenticationFailureHandler(...)` doing identical
+work. The servlet `OAuth2ResourceServerConfigurer` doesn't have that
+particular reactive-only distinction (`ServerAuthenticationFailureHandler`
+vs `ServerAuthenticationEntryPoint`), so the duplicate handler was dropped —
+one less thing to keep in sync, not a behavior change.
+
+### `RouteConfig.java` → `ProxyController.java`
+
+This was the biggest change, because Spring Cloud Gateway's reactive
+`RouteLocatorBuilder`/`RouteLocator` has no plain-Servlet equivalent within
+the same library to swap in. Replaced with a hand-rolled `@RestController`
+that forwards each request byte-for-byte via a blocking `RestClient` call
+and relays the response back unchanged (status, headers, raw body) —
+matching the `RestClient` usage pattern `service-1`'s `ApiController`
+already uses to call Service 2/3.
+
+**The one detail that would have silently reintroduced a real bug**: Spring
+Cloud Gateway's `XForwardedHeadersFilter` used to add `X-Forwarded-Host` /
+`-Proto` / `-Port` to every proxied request automatically. Service 1/2/3
+depend on those headers (`server.forward-headers-strategy: framework`) to
+reconstruct the Gateway's *public* URL rather than their own internal port,
+which is exactly what DPoP proof `htu` validation checks against (see
+`CLAUDE.md` and `EXECUTION_LOG.md` ISSUE-003 for the original bug this
+fixed). `ProxyController.forward()` now sets those three headers explicitly.
+This was verified live during the refactor, not just assumed: a temporary
+diagnostic print confirmed the Gateway sends
+`X-Forwarded-Host=localhost:8080` (its own public address) when proxying to
+Service 1 on `localhost:8081` — i.e., Service 1 still sees the *Gateway's*
+address, not its own, exactly as before.
+
+Also handles error-status passthrough explicitly via `RestClient`'s
+`.exchange(...)` (which hands you the raw response to do anything with),
+rather than `.retrieve()` (which throws on 4xx/5xx by default) — needed so
+a downstream `401` gets relayed to the browser as a `401`, not swallowed
+into a generic proxy error.
+
+### `DpopProofWebFilter.java` → `DpopProofFilter.java`
+
+`WebFilter` → `OncePerRequestFilter`; `Mono<Void>` → `void`;
+`ServerWebExchange` → `HttpServletRequest`/`HttpServletResponse`. The
+principal is read from `SecurityContextHolder.getContext().getAuthentication()`
+instead of `exchange.getPrincipal()`.
+
+The interesting removal: `Schedulers.boundedElastic()` and
+`.subscribeOn(...)` are **gone entirely**. That machinery existed for exactly
+one reason (see Part 1 §1.4) — to move the blocking JWK-parsing/thumbprint
+work off Netty's event-loop thread. On the Servlet stack, this method
+already runs on its own dedicated request thread; blocking is simply what
+that thread is there to do. No equivalent concept needed.
+
+### `RevocationCheckWebFilter.java` → `RevocationCheckFilter.java`
+
+Same `WebFilter` → `OncePerRequestFilter` conversion. This one never had
+blocking work to relocate in the first place (just a map lookup), so it's
+the more typical, simpler case — a useful contrast with `DpopProofFilter`
+above.
+
+### `JwtDebugWebFilter.java` → `JwtDebugFilter.java`
+
+Same conversion; `.doOnNext(...).then(...)` becomes a plain `if` check
+followed by `chain.doFilter(...)`. `@Order(801)` is unchanged — Spring Boot
+auto-registers any `Filter` bean (servlet or the old reactive `WebFilter`
+alike) using `@Order` to position it among other auto-registered filters,
+so this ordering strategy carries over identically.
+
+### `GlobalTokenRevocationController.java`
+
+`Mono<ResponseEntity<Void>>` → plain `ResponseEntity<Void>`;
+`ReactiveJwtDecoder`/`NimbusReactiveJwtDecoder` → `JwtDecoder`/`NimbusJwtDecoder`
+(same builder API, just without "Reactive" in the name); `.flatMap(...)`/
+`.onErrorResume(...)` → an ordinary `try`/`catch`.
+
+### `CorsConfig.java`
+
+Only the import changed: `org.springframework.web.cors.reactive.UrlBasedCorsConfigurationSource`
+→ `org.springframework.web.cors.UrlBasedCorsConfigurationSource` (two
+distinct classes with the same simple name, in parallel reactive/servlet
+packages). While touching this file, also added `X-Session-Revoked` to the
+exposed headers list — a pre-existing gap from when Phase 6 introduced that
+header, unrelated to WebFlux but caught while working in this file.
+
+### `GatewayApplication.java`
+
+Added a `RestClient` bean (`@Bean RestClient restClient(RestClient.Builder
+builder)`), needed by `ProxyController` — the same bean every `service-*`
+module's `*Application.java` already declares for the same reason.
+
+### `application.yml`
+
+Removed `spring.cloud.gateway.server.webflux.trusted-proxies` — meaningless
+once Spring Cloud Gateway is gone. Added `service-one.url` / `service-two.url`
+(read by `ProxyController`, same naming convention as `service-two.url`
+already used in `service-1`'s config for its own downstream calls).
+
+### What *didn't* change
+
+- `RevocationDenyList.java` — already plain Java (`ConcurrentHashMap`,
+  `@Scheduled`), no reactive types involved. Untouched.
+- `RevocationDenyListTest.java` — untouched, same reason.
+- `GatewayApplication.java`'s `@EnableScheduling` — unrelated to WebFlux,
+  stays as-is.
+
+### Verification
+
+`./gradlew clean compileJava test` passes for all four modules. Live-tested
+after rebuilding: `/actuator/health` returns `200`; an unauthenticated call
+to `/api/service-1/ping` through the Gateway now correctly proxies through
+to Service 1 (confirmed via Service 1's own log timestamp) and gets
+rejected there with `401` exactly as before the refactor; the
+`X-Forwarded-Host` propagation was directly confirmed via a temporary
+diagnostic (removed before the final commit) rather than assumed.

@@ -5,73 +5,61 @@ import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.config.Customizer;
-import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity;
-import org.springframework.security.config.web.server.ServerHttpSecurity;
-import org.springframework.security.oauth2.server.resource.web.server.BearerTokenServerAuthenticationEntryPoint;
-import org.springframework.security.oauth2.server.resource.authentication.BearerTokenAuthenticationToken;
-import org.springframework.security.oauth2.server.resource.web.server.authentication.ServerBearerTokenAuthenticationConverter;
-import org.springframework.security.config.web.server.SecurityWebFiltersOrder;
-import org.springframework.security.web.server.authentication.ServerAuthenticationConverter;
-import org.springframework.security.web.server.SecurityWebFilterChain;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.oauth2.server.resource.web.BearerTokenAuthenticationEntryPoint;
+import org.springframework.security.oauth2.server.resource.web.BearerTokenResolver;
+import org.springframework.security.oauth2.server.resource.web.DefaultBearerTokenResolver;
+import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
+import org.springframework.security.web.SecurityFilterChain;
 
 @Configuration
-@EnableWebFluxSecurity
 public class SecurityConfig {
     private static final Logger LOGGER = LoggerFactory.getLogger(SecurityConfig.class);
-    private final BearerTokenServerAuthenticationEntryPoint authenticationEntryPoint =
-            new BearerTokenServerAuthenticationEntryPoint();
+    private final BearerTokenAuthenticationEntryPoint authenticationEntryPoint =
+            new BearerTokenAuthenticationEntryPoint();
 
     @Bean
-    SecurityWebFilterChain securityWebFilterChain(
-            ServerHttpSecurity http,
-            DpopProofWebFilter dpopProofWebFilter,
-            RevocationCheckWebFilter revocationCheckWebFilter) {
+    SecurityFilterChain securityFilterChain(
+            HttpSecurity http,
+            DpopProofFilter dpopProofFilter,
+            RevocationCheckFilter revocationCheckFilter) throws Exception {
         return http
-                .csrf(ServerHttpSecurity.CsrfSpec::disable)
+                .csrf(csrf -> csrf.disable())
                 .cors(Customizer.withDefaults())
-                .authorizeExchange(exchanges -> exchanges
-                        .pathMatchers(HttpMethod.OPTIONS).permitAll()
-                        .pathMatchers("/actuator/health", "/actuator/info").permitAll()
-                        .pathMatchers("/global-token-revocation").permitAll()
-                        .anyExchange().authenticated())
-                .exceptionHandling(exceptions -> exceptions.authenticationEntryPoint((exchange, exception) -> {
+                .authorizeHttpRequests(requests -> requests
+                        .requestMatchers(HttpMethod.OPTIONS).permitAll()
+                        .requestMatchers("/actuator/health", "/actuator/info").permitAll()
+                        .requestMatchers("/global-token-revocation").permitAll()
+                        .anyRequest().authenticated())
+                .exceptionHandling(exceptions -> exceptions.authenticationEntryPoint((request, response, exception) -> {
                     LOGGER.debug("jwt_validation_failure component=gateway path={} reason={}",
-                            exchange.getRequest().getPath(), exception.getClass().getSimpleName());
-                    return authenticationEntryPoint.commence(exchange, exception);
+                            request.getRequestURI(), exception.getClass().getSimpleName());
+                    authenticationEntryPoint.commence(request, response, exception);
                 }))
                 .oauth2ResourceServer(oauth2 -> oauth2
-                        .bearerTokenConverter(dpopAwareTokenConverter())
-                        .authenticationFailureHandler((webFilterExchange, exception) -> {
-                            webFilterExchange.getExchange().getResponse().setStatusCode(
-                                    org.springframework.http.HttpStatus.UNAUTHORIZED);
-                            webFilterExchange.getExchange().getResponse().getHeaders().set(
+                        .bearerTokenResolver(dpopAwareTokenResolver())
+                        .authenticationEntryPoint((request, response, exception) -> {
+                            response.setStatus(HttpStatus.UNAUTHORIZED.value());
+                            response.setHeader(
                                     "X-Authentication-Failure",
                                     exception.getClass().getSimpleName() + ": " + exception.getMessage());
-                            return webFilterExchange.getExchange().getResponse().setComplete();
-                        })
-                        .authenticationEntryPoint((exchange, exception) -> {
-                            exchange.getResponse().setStatusCode(org.springframework.http.HttpStatus.UNAUTHORIZED);
-                            exchange.getResponse().getHeaders().set(
-                                    "X-Authentication-Failure",
-                                    exception.getClass().getSimpleName() + ": " + exception.getMessage());
-                            return exchange.getResponse().setComplete();
                         })
                         .jwt(Customizer.withDefaults()))
-                .addFilterAfter(dpopProofWebFilter, SecurityWebFiltersOrder.AUTHENTICATION)
-                .addFilterAfter(revocationCheckWebFilter, SecurityWebFiltersOrder.AUTHENTICATION)
+                .addFilterAfter(dpopProofFilter, BearerTokenAuthenticationFilter.class)
+                .addFilterAfter(revocationCheckFilter, BearerTokenAuthenticationFilter.class)
                 .build();
     }
 
-    private ServerAuthenticationConverter dpopAwareTokenConverter() {
-        ServerBearerTokenAuthenticationConverter bearerTokenConverter = new ServerBearerTokenAuthenticationConverter();
-        return exchange -> {
-            String authorization = exchange.getRequest().getHeaders().getFirst("Authorization");
+    private BearerTokenResolver dpopAwareTokenResolver() {
+        DefaultBearerTokenResolver defaultResolver = new DefaultBearerTokenResolver();
+        return request -> {
+            String authorization = request.getHeader("Authorization");
             if (authorization != null && authorization.startsWith("DPoP ")) {
-                return reactor.core.publisher.Mono.just(
-                        new BearerTokenAuthenticationToken(authorization.substring("DPoP ".length())));
+                return authorization.substring("DPoP ".length());
             }
-            return bearerTokenConverter.convert(exchange);
+            return defaultResolver.resolve(request);
         };
     }
 }

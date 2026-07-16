@@ -1,5 +1,9 @@
 server:
   port: 8080
+service-one:
+  url: ${SERVICE_ONE_URL:http://localhost:8081}
+service-two:
+  url: ${SERVICE_TWO_URL:http://localhost:8082}
 app:
   dpop:
     required: ${DPOP_REQUIRED:true}
@@ -12,11 +16,6 @@ app:
 spring:
   application:
     name: gateway
-  cloud:
-    gateway:
-      server:
-        webflux:
-          trusted-proxies: 127\.0\.0\.1|::1|0:0:0:0:0:0:0:1
   security:
     oauth2:
       resourceserver:

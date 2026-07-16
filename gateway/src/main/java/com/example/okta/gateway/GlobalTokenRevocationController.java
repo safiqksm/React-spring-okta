@@ -11,15 +11,14 @@ import org.springframework.security.oauth2.core.OAuth2Error;
 import org.springframework.security.oauth2.core.OAuth2TokenValidator;
 import org.springframework.security.oauth2.core.OAuth2TokenValidatorResult;
 import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtException;
 import org.springframework.security.oauth2.jwt.JwtTimestampValidator;
-import org.springframework.security.oauth2.jwt.NimbusReactiveJwtDecoder;
-import org.springframework.security.oauth2.jwt.ReactiveJwtDecoder;
+import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
-import reactor.core.publisher.Mono;
 
 /**
  * Okta Global Token Revocation (Universal Logout) endpoint. Okta's cloud POSTs here
@@ -32,7 +31,7 @@ public class GlobalTokenRevocationController {
     private static final Logger LOGGER = LoggerFactory.getLogger(GlobalTokenRevocationController.class);
     private static final String EXPECTED_TYP = "global-token-revocation+jwt";
 
-    private final ReactiveJwtDecoder jwtDecoder;
+    private final JwtDecoder jwtDecoder;
     private final RevocationDenyList denyList;
 
     GlobalTokenRevocationController(
@@ -40,7 +39,7 @@ public class GlobalTokenRevocationController {
             @Value("${app.revocation.issuer}") String issuer,
             @Value("${app.revocation.endpoint-url}") String endpointUrl) {
         this.denyList = denyList;
-        NimbusReactiveJwtDecoder decoder = NimbusReactiveJwtDecoder.withIssuerLocation(issuer).build();
+        NimbusJwtDecoder decoder = NimbusJwtDecoder.withIssuerLocation(issuer).build();
         OAuth2TokenValidator<Jwt> audienceValidator = jwt -> jwt.getAudience() != null && jwt.getAudience().contains(endpointUrl)
                 ? OAuth2TokenValidatorResult.success()
                 : OAuth2TokenValidatorResult.failure(new OAuth2Error("invalid_token", "aud does not match this endpoint", null));
@@ -49,37 +48,39 @@ public class GlobalTokenRevocationController {
     }
 
     @PostMapping("/global-token-revocation")
-    Mono<ResponseEntity<Void>> revoke(
+    ResponseEntity<Void> revoke(
             @RequestHeader(value = "Authorization", required = false) String authorization,
             @RequestBody Map<String, Object> body) {
         if (authorization == null || !authorization.startsWith("Bearer ")) {
             LOGGER.debug("gtr_rejected component=gateway reason=missing_bearer_scheme");
-            return Mono.just(ResponseEntity.status(HttpStatus.UNAUTHORIZED).build());
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
         String token = authorization.substring("Bearer ".length());
-        return jwtDecoder.decode(token)
-                .flatMap(jwt -> handleValidatedJwt(jwt, body))
-                .onErrorResume(JwtException.class, exception -> {
-                    LOGGER.debug("gtr_rejected component=gateway reason={} message={}",
-                            exception.getClass().getSimpleName(), exception.getMessage());
-                    return Mono.just(ResponseEntity.status(HttpStatus.UNAUTHORIZED).build());
-                });
+        Jwt jwt;
+        try {
+            jwt = jwtDecoder.decode(token);
+        } catch (JwtException exception) {
+            LOGGER.debug("gtr_rejected component=gateway reason={} message={}",
+                    exception.getClass().getSimpleName(), exception.getMessage());
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+        return handleValidatedJwt(jwt, body);
     }
 
-    private Mono<ResponseEntity<Void>> handleValidatedJwt(Jwt jwt, Map<String, Object> body) {
+    private ResponseEntity<Void> handleValidatedJwt(Jwt jwt, Map<String, Object> body) {
         Object typ = jwt.getHeaders().get("typ");
         if (!EXPECTED_TYP.equals(typ)) {
             LOGGER.debug("gtr_rejected component=gateway reason=unexpected_typ typ={}", typ);
-            return Mono.just(ResponseEntity.status(HttpStatus.UNAUTHORIZED).build());
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
         String subject = extractSubject(body);
         if (subject == null) {
             LOGGER.debug("gtr_rejected component=gateway reason=malformed_sub_id");
-            return Mono.just(ResponseEntity.badRequest().build());
+            return ResponseEntity.badRequest().build();
         }
         denyList.revoke(subject);
         LOGGER.debug("gtr_accepted component=gateway subject={}", subject);
-        return Mono.just(ResponseEntity.noContent().build());
+        return ResponseEntity.noContent().build();
     }
 
     @SuppressWarnings("unchecked")
