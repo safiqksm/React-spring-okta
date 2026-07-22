@@ -1,10 +1,14 @@
 # Render Blueprint — deploys all 4 backend modules from this one repo.
 # Import via Render Dashboard -> New -> Blueprint, pointing at this repo.
 #
-# Only `gateway` is public (type: web) -- it's the only service Okta or the
-# deployed frontend ever needs to reach directly. service-1/2/3 are private
-# services (type: pserv): reachable from other Render services in this same
-# Blueprint over Render's internal network, never from the public internet.
+# All 4 services are type: web (public, onrender.com URLs) so everything can
+# stay on Render's free plan -- Render's free plan is not available for
+# private services (type: pserv), which would otherwise be the better fit
+# for service-1/2/3 (nothing outside this backend ever calls them directly).
+# They're still protected by their own existing OAuth2/JWT resource-server
+# validation regardless of network reachability; they just aren't
+# network-isolated the way a pserv would be. Revisit as type: pserv +
+# plan: starter if that isolation matters enough to pay for it later.
 #
 # Fields marked `sync: false` are prompted for during Blueprint creation and
 # are never written into this file or committed to git.
@@ -37,7 +41,7 @@ services:
         sync: false
 
   - name: react-spring-okta-service-1
-    type: pserv
+    type: web
     runtime: docker
     dockerfilePath: ./service-1/Dockerfile
     plan: free
@@ -69,7 +73,7 @@ services:
         sync: false
 
   - name: react-spring-okta-service-2
-    type: pserv
+    type: web
     runtime: docker
     dockerfilePath: ./service-2/Dockerfile
     plan: free
@@ -80,7 +84,7 @@ services:
         value: https://ntrsoiesys.oktapreview.com
 
   - name: react-spring-okta-service-3
-    type: pserv
+    type: web
     runtime: docker
     dockerfilePath: ./service-3/Dockerfile
     plan: free

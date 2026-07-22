@@ -12,20 +12,26 @@ domains" as an explanation for the dispatch failures we saw.
 
 ## Architecture
 
-Only **`react-spring-okta-gateway`** is public. `service-1`, `service-2`,
-`service-3` are Render **private services** (`type: pserv`) — reachable only
-from other services in this same Render Blueprint, never from the public
-internet, since nothing outside this backend ever calls them directly.
+All 4 services are `type: web` (public `onrender.com` URLs), so everything
+stays on Render's **free** plan. This isn't the ideal architecture: nothing
+outside this backend ever calls `service-1/2/3` directly, so they'd
+naturally be Render **private services** (`type: pserv`) — but Render's free
+plan explicitly isn't available for private services, only for `type: web`.
+They're still protected by their own existing OAuth2/JWT resource-server
+validation regardless of network reachability; they just aren't
+network-isolated. If that isolation matters enough to pay for later, switch
+their `type` to `pserv` and `plan` to `starter` (~$7/month each) in
+`render.yaml`.
 
 ```
 Browser / Vercel SPA ──HTTPS──▶ react-spring-okta-gateway (public, type: web)
-                                        │  SERVICE_ONE_URL (private network)
+                                        │  SERVICE_ONE_URL (Render internal networking)
                                         ▼
-                                 react-spring-okta-service-1 (private, type: pserv)
+                                 react-spring-okta-service-1 (public, type: web)
                                    │ SERVICE_TWO_URL          │ SERVICE_THREE_URL
                                    ▼                          ▼
                           react-spring-okta-service-2   react-spring-okta-service-3
-                                (private, pserv)              (private, pserv)
+                              (public, type: web)           (public, type: web)
 
 Okta Cloud ──HTTPS POST──▶ react-spring-okta-gateway /global-token-revocation
 ```
@@ -49,7 +55,8 @@ Okta Cloud ──HTTPS POST──▶ react-spring-okta-gateway /global-token-rev
 3. Deploy. `service-1/2/3` need no further input — `SERVICE_TWO_URL` and
    `SERVICE_THREE_URL` on `service-1`, and `SERVICE_ONE_URL` on `gateway`,
    are wired automatically via Render's `fromService` references to each
-   private service's internal `host:port`.
+   service's internal `host:port` (Render's internal networking works for
+   `type: web` services too, not just `pserv`).
 4. **Two-step step for `REVOCATION_ENDPOINT_URL`** (a real chicken-and-egg:
    the Gateway needs to know its own public URL, which Render only assigns
    once the service exists): after the first deploy, copy
@@ -67,9 +74,11 @@ Okta's Universal Logout dispatch may have a request timeout, and a cold
 Gateway could cause a delivery to silently fail or be reported as an error
 on Okta's side, muddying exactly the signal we're trying to get. If you're
 actively testing GTR, consider upgrading `react-spring-okta-gateway` to a
-paid **Starter** plan (always-on) — the three private services can stay on
-free tier, since a slow first hit to them just adds latency, not dropped
-webhooks.
+paid **Starter** plan (always-on) — `service-1/2/3` can stay on free tier,
+since a slow first hit to them just adds latency, not dropped webhooks. All
+4 services share the same Render account's 750 free instance-hours/month
+(shared with any other free services already in that account) while idle
+time doesn't count against that budget.
 
 ## Vercel setup (frontend)
 
