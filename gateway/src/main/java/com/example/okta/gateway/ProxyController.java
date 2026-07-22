@@ -34,8 +34,17 @@ public class ProxyController {
             @Value("${service-one.url:http://localhost:8081}") String serviceOneUrl,
             @Value("${service-two.url:http://localhost:8082}") String serviceTwoUrl) {
         this.restClient = restClient;
-        this.serviceOneUrl = serviceOneUrl;
-        this.serviceTwoUrl = serviceTwoUrl;
+        this.serviceOneUrl = withScheme(serviceOneUrl);
+        this.serviceTwoUrl = withScheme(serviceTwoUrl);
+    }
+
+    /**
+     * Render's private-service URL references (fromService, property: hostport) resolve
+     * to a bare "host:port" with no scheme, unlike the "http://host:port" this project's
+     * env vars otherwise use for local dev. Accept either.
+     */
+    private static String withScheme(String url) {
+        return url.contains("://") ? url : "http://" + url;
     }
 
     @RequestMapping("/api/service-1/**")

@@ -1,10 +1,12 @@
 server:
-  port: 8080
+  port: ${PORT:8080}
 service-one:
   url: ${SERVICE_ONE_URL:http://localhost:8081}
 service-two:
   url: ${SERVICE_TWO_URL:http://localhost:8082}
 app:
+  cors:
+    extra-allowed-origin: ${ALLOWED_ORIGIN:}
   dpop:
     required: ${DPOP_REQUIRED:true}
     debug-headers: ${DPOP_DEBUG_HEADERS:true}

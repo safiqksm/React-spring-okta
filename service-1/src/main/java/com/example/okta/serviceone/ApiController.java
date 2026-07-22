@@ -35,8 +35,17 @@ public class ApiController {
         this.restClient = restClient;
         this.serviceTwoTokenProvider = serviceTwoTokenProvider;
         this.serviceThreeTokenProvider = serviceThreeTokenProvider;
-        this.serviceTwoUrl = serviceTwoUrl;
-        this.serviceThreeUrl = serviceThreeUrl;
+        this.serviceTwoUrl = withScheme(serviceTwoUrl);
+        this.serviceThreeUrl = withScheme(serviceThreeUrl);
+    }
+
+    /**
+     * Render's private-service URL references (fromService, property: hostport) resolve
+     * to a bare "host:port" with no scheme, unlike the "http://host:port" this project's
+     * env vars otherwise use for local dev. Accept either.
+     */
+    private static String withScheme(String url) {
+        return url.contains("://") ? url : "http://" + url;
     }
 
     @GetMapping("/service-1/hello")

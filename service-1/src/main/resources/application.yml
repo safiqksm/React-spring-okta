@@ -1,5 +1,5 @@
 server:
-  port: 8081
+  port: ${PORT:8081}
   forward-headers-strategy: framework
 spring:
   application:
@@ -16,6 +16,7 @@ service-two:
     token-uri: ${SERVICE_TWO_TOKEN_URI:${OKTA_ISSUER:https://ntrsoiesys.oktapreview.com/oauth2/aus11aowjcqDJAtVk1d8}/v1/token}
     client-id: ${SERVICE_TWO_CLIENT_ID:0oa11b0i0rqMoVAxU1d8}
     private-key-path: ${SERVICE_TWO_CLIENT_PRIVATE_KEY_PATH:secrets/service-1-private-key.pem}
+    private-key: ${SERVICE_TWO_CLIENT_PRIVATE_KEY:}
     scope: ${SERVICE_TWO_CLIENT_SCOPE:service2.read}
 service-three:
   url: ${SERVICE_THREE_URL:http://localhost:8083}

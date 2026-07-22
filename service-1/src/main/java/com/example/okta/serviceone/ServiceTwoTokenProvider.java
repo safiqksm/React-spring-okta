@@ -31,24 +31,28 @@ class ServiceTwoTokenProvider {
     private final String tokenUri;
     private final String clientId;
     private final String privateKeyPath;
+    private final String privateKeyContent;
     private final String scope;
 
     ServiceTwoTokenProvider(
             RestClient restClient,
             @Value("${service-two.client.token-uri}") String tokenUri,
             @Value("${service-two.client.client-id}") String clientId,
-            @Value("${service-two.client.private-key-path}") String privateKeyPath,
+            @Value("${service-two.client.private-key-path:}") String privateKeyPath,
+            @Value("${service-two.client.private-key:}") String privateKeyContent,
             @Value("${service-two.client.scope}") String scope) {
         this.restClient = restClient;
         this.tokenUri = tokenUri;
         this.clientId = clientId;
         this.privateKeyPath = privateKeyPath;
+        this.privateKeyContent = privateKeyContent;
         this.scope = scope;
     }
 
     TokenResult accessToken() {
-        if (clientId.isBlank() || privateKeyPath.isBlank()) {
-            throw new IllegalStateException("SERVICE_TWO_CLIENT_ID and SERVICE_TWO_CLIENT_PRIVATE_KEY_PATH are required");
+        if (clientId.isBlank() || (privateKeyPath.isBlank() && privateKeyContent.isBlank())) {
+            throw new IllegalStateException(
+                    "SERVICE_TWO_CLIENT_ID and one of SERVICE_TWO_CLIENT_PRIVATE_KEY_PATH / SERVICE_TWO_CLIENT_PRIVATE_KEY are required");
         }
 
         String assertion = clientAssertion();
@@ -90,7 +94,10 @@ class ServiceTwoTokenProvider {
 
     private String clientAssertion() {
         try {
-            JWK parsedKey = RSAKey.parseFromPEMEncodedObjects(Files.readString(Path.of(privateKeyPath)));
+            String pem = privateKeyContent.isBlank()
+                    ? Files.readString(Path.of(privateKeyPath))
+                    : privateKeyContent.replace("\\n", "\n");
+            JWK parsedKey = RSAKey.parseFromPEMEncodedObjects(pem);
             if (!(parsedKey instanceof RSAKey signingKey) || !signingKey.isPrivate()) {
                 throw new IllegalArgumentException("Service 2 client key must be an RSA private key");
             }

@@ -1,0 +1,91 @@
+# Render Blueprint — deploys all 4 backend modules from this one repo.
+# Import via Render Dashboard -> New -> Blueprint, pointing at this repo.
+#
+# Only `gateway` is public (type: web) -- it's the only service Okta or the
+# deployed frontend ever needs to reach directly. service-1/2/3 are private
+# services (type: pserv): reachable from other Render services in this same
+# Blueprint over Render's internal network, never from the public internet.
+#
+# Fields marked `sync: false` are prompted for during Blueprint creation and
+# are never written into this file or committed to git.
+
+services:
+  - name: react-spring-okta-gateway
+    type: web
+    runtime: docker
+    dockerfilePath: ./gateway/Dockerfile
+    plan: free
+    envVars:
+      - key: OKTA_ISSUER
+        value: https://ntrsoiesys.oktapreview.com/oauth2/aus11aowjcqDJAtVk1d8
+      - key: OKTA_AUDIENCE
+        value: https://ntrsoiesys.oktapreview.com
+      - key: SERVICE_ONE_URL
+        value:
+          fromService:
+            name: react-spring-okta-service-1
+            property: hostport
+      # After the first deploy, note this service's public onrender.com URL,
+      # then set this to "<that-url>/global-token-revocation" and redeploy --
+      # this is the same URL you paste into Okta's Logout endpoint field.
+      - key: REVOCATION_ENDPOINT_URL
+        sync: false
+      # Your Vercel deployment's origin, e.g. https://your-app.vercel.app
+      # (no trailing slash, no path) -- added to CORS allowed origins
+      # alongside http://localhost:5173, no code change needed.
+      - key: ALLOWED_ORIGIN
+        sync: false
+
+  - name: react-spring-okta-service-1
+    type: pserv
+    runtime: docker
+    dockerfilePath: ./service-1/Dockerfile
+    plan: free
+    envVars:
+      - key: OKTA_ISSUER
+        value: https://ntrsoiesys.oktapreview.com/oauth2/aus11aowjcqDJAtVk1d8
+      - key: OKTA_AUDIENCE
+        value: https://ntrsoiesys.oktapreview.com
+      - key: SERVICE_TWO_URL
+        value:
+          fromService:
+            name: react-spring-okta-service-2
+            property: hostport
+      - key: SERVICE_THREE_URL
+        value:
+          fromService:
+            name: react-spring-okta-service-3
+            property: hostport
+      - key: SERVICE_TWO_CLIENT_ID
+        value: 0oa11b0i0rqMoVAxU1d8
+      # Paste the full contents of secrets/service-1-private-key.pem here.
+      # Real newlines or "\n"-escaped newlines both work (ServiceTwoTokenProvider
+      # unescapes "\n" if present).
+      - key: SERVICE_TWO_CLIENT_PRIVATE_KEY
+        sync: false
+      - key: SERVICE_THREE_CLIENT_ID
+        sync: false
+      - key: SERVICE_THREE_CLIENT_SECRET
+        sync: false
+
+  - name: react-spring-okta-service-2
+    type: pserv
+    runtime: docker
+    dockerfilePath: ./service-2/Dockerfile
+    plan: free
+    envVars:
+      - key: OKTA_ISSUER
+        value: https://ntrsoiesys.oktapreview.com/oauth2/aus11aowjcqDJAtVk1d8
+      - key: OKTA_AUDIENCE
+        value: https://ntrsoiesys.oktapreview.com
+
+  - name: react-spring-okta-service-3
+    type: pserv
+    runtime: docker
+    dockerfilePath: ./service-3/Dockerfile
+    plan: free
+    envVars:
+      - key: OKTA_ISSUER
+        value: https://ntrsoiesys.oktapreview.com/oauth2/aus11aowjcqDJAtVk1d8
+      - key: OKTA_AUDIENCE
+        value: https://ntrsoiesys.oktapreview.com

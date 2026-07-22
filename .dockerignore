@@ -1,0 +1,10 @@
+**/build/
+**/.gradle/
+**/node_modules/
+**/dist/
+.git/
+frontend/
+secrets/
+.env
+*.env
+!frontend/.env.example
