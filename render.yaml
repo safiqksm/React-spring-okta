@@ -25,10 +25,10 @@ services:
       - key: OKTA_AUDIENCE
         value: https://ntrsoiesys.oktapreview.com
       - key: SERVICE_ONE_URL
-        value:
-          fromService:
-            name: react-spring-okta-service-1
-            property: hostport
+        fromService:
+          name: react-spring-okta-service-1
+          type: web
+          property: hostport
       # After the first deploy, note this service's public onrender.com URL,
       # then set this to "<that-url>/global-token-revocation" and redeploy --
       # this is the same URL you paste into Okta's Logout endpoint field.
@@ -51,15 +51,15 @@ services:
       - key: OKTA_AUDIENCE
         value: https://ntrsoiesys.oktapreview.com
       - key: SERVICE_TWO_URL
-        value:
-          fromService:
-            name: react-spring-okta-service-2
-            property: hostport
+        fromService:
+          name: react-spring-okta-service-2
+          type: web
+          property: hostport
       - key: SERVICE_THREE_URL
-        value:
-          fromService:
-            name: react-spring-okta-service-3
-            property: hostport
+        fromService:
+          name: react-spring-okta-service-3
+          type: web
+          property: hostport
       - key: SERVICE_TWO_CLIENT_ID
         value: 0oa11b0i0rqMoVAxU1d8
       # Paste the full contents of secrets/service-1-private-key.pem here.
