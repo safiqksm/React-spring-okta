@@ -24,11 +24,13 @@ services:
         value: https://ntrsoiesys.oktapreview.com/oauth2/aus11aowjcqDJAtVk1d8
       - key: OKTA_AUDIENCE
         value: https://ntrsoiesys.oktapreview.com
+      # Public HTTPS URL, not Render's private network (fromService/hostport
+      # DNS resolution failed to resolve between these two type: web services
+      # for reasons Render's docs don't explain -- UnresolvedAddressException
+      # at runtime despite matching region/workspace). All 4 services already
+      # validate their own OAuth2/JWT independently, so this loses no security.
       - key: SERVICE_ONE_URL
-        fromService:
-          name: react-spring-okta-service-1
-          type: web
-          property: hostport
+        value: https://react-spring-okta-service-1.onrender.com
       # After the first deploy, note this service's public onrender.com URL,
       # then set this to "<that-url>/global-token-revocation" and redeploy --
       # this is the same URL you paste into Okta's Logout endpoint field.
@@ -50,16 +52,11 @@ services:
         value: https://ntrsoiesys.oktapreview.com/oauth2/aus11aowjcqDJAtVk1d8
       - key: OKTA_AUDIENCE
         value: https://ntrsoiesys.oktapreview.com
+      # Public HTTPS URLs -- see the comment on gateway's SERVICE_ONE_URL above.
       - key: SERVICE_TWO_URL
-        fromService:
-          name: react-spring-okta-service-2
-          type: web
-          property: hostport
+        value: https://react-spring-okta-service-2.onrender.com
       - key: SERVICE_THREE_URL
-        fromService:
-          name: react-spring-okta-service-3
-          type: web
-          property: hostport
+        value: https://react-spring-okta-service-3.onrender.com
       - key: SERVICE_TWO_CLIENT_ID
         value: 0oa11b0i0rqMoVAxU1d8
       # Paste the full contents of secrets/service-1-private-key.pem here.
