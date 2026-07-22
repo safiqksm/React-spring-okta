@@ -1,5 +1,6 @@
 server:
   port: ${PORT:8080}
+  forward-headers-strategy: framework
 service-one:
   url: ${SERVICE_ONE_URL:http://localhost:8081}
 service-two:
