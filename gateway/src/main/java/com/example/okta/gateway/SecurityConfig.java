@@ -9,8 +9,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.oauth2.server.resource.web.BearerTokenAuthenticationEntryPoint;
-import org.springframework.security.oauth2.server.resource.web.BearerTokenResolver;
-import org.springframework.security.oauth2.server.resource.web.DefaultBearerTokenResolver;
 import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 import org.springframework.security.web.SecurityFilterChain;
 
@@ -39,7 +37,6 @@ public class SecurityConfig {
                     authenticationEntryPoint.commence(request, response, exception);
                 }))
                 .oauth2ResourceServer(oauth2 -> oauth2
-                        .bearerTokenResolver(dpopAwareTokenResolver())
                         .authenticationEntryPoint((request, response, exception) -> {
                             response.setStatus(HttpStatus.UNAUTHORIZED.value());
                             response.setHeader(
@@ -50,16 +47,5 @@ public class SecurityConfig {
                 .addFilterAfter(dpopProofFilter, BearerTokenAuthenticationFilter.class)
                 .addFilterAfter(revocationCheckFilter, BearerTokenAuthenticationFilter.class)
                 .build();
-    }
-
-    private BearerTokenResolver dpopAwareTokenResolver() {
-        DefaultBearerTokenResolver defaultResolver = new DefaultBearerTokenResolver();
-        return request -> {
-            String authorization = request.getHeader("Authorization");
-            if (authorization != null && authorization.startsWith("DPoP ")) {
-                return authorization.substring("DPoP ".length());
-            }
-            return defaultResolver.resolve(request);
-        };
     }
 }
